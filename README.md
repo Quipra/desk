@@ -8,7 +8,7 @@ Built for the [OpenAI WebMCP Challenge](https://webmcp.devpost.com/), for learni
 
 ## Try it
 
-Live: (coming, see deploy below)
+Live: https://quipra.github.io/desk/ (GitHub Pages; Vercel URL to follow)
 
 Open Desk in a browser with WebMCP:
 
