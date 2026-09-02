@@ -164,6 +164,8 @@ canvas {
 
 .tray-inner {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 4px;
   padding: 6px;

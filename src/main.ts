@@ -17,6 +17,7 @@ app.innerHTML = `
   </header>
   <main class="stage" id="stage">
     <canvas id="paper"></canvas>
+    <div class="hint" id="hint">a shared sheet. draw on it, or ask your agent to.</div>
   </main>
   <footer class="tray">
     <div class="tray-inner">
@@ -96,8 +97,10 @@ sheetBtn.addEventListener("click", () => {
   const next = order[(order.indexOf(scene.paper) + 1) % order.length];
   scene.setPaper(next);
 });
+const hint = document.querySelector<HTMLElement>("#hint")!;
 scene.on((e) => {
   if (e.type === "paper" || e.type === "clear") sheetBtn.textContent = `sheet: ${scene.paper}`;
+  hint.hidden = scene.items.length > 0;
 });
 
 // Pointer readout in paper units, useful when talking to the agent about positions.
@@ -154,8 +157,10 @@ function setAgentActive(active: boolean) {
 }
 paper.onActivity = setAgentActive;
 
-registerDesk(scene, paper, { onActivity: setAgentActive }).then((ok) => {
-  if (ok) {
+registerDesk(scene, paper, { onActivity: setAgentActive }).then((desk) => {
+  // Handy for trying instruments from the console and for automated checks.
+  (window as unknown as { desk: unknown }).desk = desk;
+  if (desk.connected) {
     agentChip.className = "chip";
     agentLabel.textContent = "agent: ready";
     return;

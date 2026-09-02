@@ -3,7 +3,7 @@
 // agent-only except the pen the agent is currently holding.
 
 import { describe } from "./look";
-import type { Paper } from "./paper";
+import { smooth, type Paper } from "./paper";
 import { bbox, clampPt, PAPER_H, PAPER_W, PEN_PRESETS, type Item, type PaperKind, type Pen, type PenKind, type Pt, type Scene, type StencilShape } from "./scene";
 
 interface ToolDef {
@@ -41,10 +41,17 @@ export interface AgentHooks {
   onActivity: (active: boolean) => void;
 }
 
-/** Registers the desk instruments. Returns false when the browser has no WebMCP. */
-export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks): Promise<boolean> {
+export interface Desk {
+  /** True when the tools were registered with the browser's WebMCP. */
+  connected: boolean;
+  /** Call an instrument directly, e.g. from the console: desk.call("draw", {...}). */
+  call: (name: string, input?: Record<string, unknown>) => Promise<unknown>;
+  names: string[];
+}
+
+/** Builds the desk instruments and registers them with WebMCP when the browser has it. */
+export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks): Promise<Desk> {
   const mc = modelContext();
-  if (!mc) return false;
 
   let pen: Pen = { ...PEN_PRESETS.pencil };
 
@@ -106,7 +113,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
         const raw = Array.isArray(i.points) ? i.points : [];
         const points = raw.map((p) => clampPt({ x: num((p as Pt).x), y: num((p as Pt).y), p: (p as Pt).p === undefined ? undefined : num((p as Pt).p) }));
         if (points.length === 0) throw new Error("points must contain at least one point");
-        const item = scene.add({ kind: "stroke", points }, { label: str(i.label, "stroke"), author: "agent", pen });
+        const item = scene.add({ kind: "stroke", points: smooth(points) }, { label: str(i.label, "stroke"), author: "agent", pen });
         return { id: item.id, label: item.label, points: points.length, bbox: box(item.id) };
       }),
     },
@@ -243,8 +250,17 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     },
   ];
 
-  for (const tool of tools) await mc.registerTool(tool);
-  return true;
+  if (mc) for (const tool of tools) await mc.registerTool(tool);
+  const byName = new Map(tools.map((t) => [t.name, t]));
+  return {
+    connected: mc !== null,
+    names: tools.map((t) => t.name),
+    call: async (name, input = {}) => {
+      const tool = byName.get(name);
+      if (!tool) throw new Error(`no instrument named ${name}`);
+      return tool.execute(input);
+    },
+  };
 
   function box(id: string) {
     const item = scene.get(id);

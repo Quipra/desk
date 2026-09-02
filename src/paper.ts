@@ -249,30 +249,87 @@ export class Paper {
     ctx.restore();
   }
 
-  private drawStroke(ctx: CanvasRenderingContext2D, pts: Pt[], pen: Pen, t: number, extra: number) {
+  /** Strokes are filled ribbons so width can vary smoothly with pressure. */
+  private drawStroke(ctx: CanvasRenderingContext2D, all: Pt[], pen: Pen, t: number, extra: number) {
+    const pts = revealed(all, t);
     if (pts.length === 0) return;
+    const half = (i: number) => widthFor(pen, pts[i].p) / 2 + extra / 2;
+    ctx.beginPath();
     if (pts.length === 1) {
-      ctx.beginPath();
-      ctx.arc(pts[0].x, pts[0].y, widthFor(pen, pts[0].p) / 2 + extra / 2, 0, Math.PI * 2);
+      ctx.arc(pts[0].x, pts[0].y, half(0), 0, Math.PI * 2);
       ctx.fill();
       return;
     }
-    const total = (pts.length - 1) * t;
-    const whole = Math.floor(total);
-    for (let i = 0; i < whole; i++) segment(ctx, pts[i], pts[i + 1], widthFor(pen, pts[i + 1].p) + extra);
-    if (whole < pts.length - 1) {
-      const frac = total - whole;
-      if (frac > 0) segment(ctx, pts[whole], lerp(pts[whole], pts[whole + 1], frac), widthFor(pen, pts[whole + 1].p) + extra);
+    const left: Pt[] = [];
+    const right: Pt[] = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[Math.max(0, i - 1)];
+      const b = pts[Math.min(pts.length - 1, i + 1)];
+      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const nx = -(b.y - a.y) / len;
+      const ny = (b.x - a.x) / len;
+      const w = half(i);
+      left.push({ x: pts[i].x + nx * w, y: pts[i].y + ny * w });
+      right.push({ x: pts[i].x - nx * w, y: pts[i].y - ny * w });
     }
+    ctx.moveTo(left[0].x, left[0].y);
+    for (let i = 1; i < left.length; i++) ctx.lineTo(left[i].x, left[i].y);
+    for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i].x, right[i].y);
+    ctx.closePath();
+    ctx.fill();
+    // Round caps.
+    ctx.beginPath();
+    ctx.arc(pts[0].x, pts[0].y, half(0), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(pts[pts.length - 1].x, pts[pts.length - 1].y, half(pts.length - 1), 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
-function segment(ctx: CanvasRenderingContext2D, a: Pt, b: Pt, width: number) {
-  ctx.lineWidth = width;
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
-  ctx.stroke();
+/** The prefix of a point list visible at reveal progress t, ending on an interpolated point. */
+function revealed(pts: Pt[], t: number): Pt[] {
+  if (t >= 1 || pts.length < 2) return pts;
+  const total = (pts.length - 1) * t;
+  const whole = Math.floor(total);
+  const out = pts.slice(0, whole + 1);
+  const frac = total - whole;
+  if (frac > 0 && whole < pts.length - 1) {
+    const a = pts[whole];
+    const b = pts[whole + 1];
+    out.push({ ...lerp(a, b, frac), p: (a.p ?? 0.5) + ((b.p ?? 0.5) - (a.p ?? 0.5)) * frac });
+  }
+  return out;
+}
+
+/**
+ * Agents give sparse points; a hand gives hundreds. Pass sparse strokes through a
+ * Catmull-Rom curve so they bend like a pen moved, not a polyline.
+ */
+export function smooth(pts: Pt[]): Pt[] {
+  if (pts.length < 3) return pts;
+  let spacing = 0;
+  for (let i = 1; i < pts.length; i++) spacing += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  spacing /= pts.length - 1;
+  if (spacing < 6) return pts;
+  const out: Pt[] = [];
+  const P = (i: number) => pts[Math.max(0, Math.min(pts.length - 1, i))];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = P(i - 1);
+    const p1 = P(i);
+    const p2 = P(i + 1);
+    const p3 = P(i + 2);
+    const steps = Math.max(2, Math.min(24, Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 4)));
+    for (let s = 0; s < steps; s++) {
+      const u = s / steps;
+      const u2 = u * u;
+      const u3 = u2 * u;
+      const c = (a: number, b: number, cc: number, d: number) => 0.5 * (2 * b + (-a + cc) * u + (2 * a - 5 * b + 4 * cc - d) * u2 + (-a + 3 * b - 3 * cc + d) * u3);
+      out.push({ x: c(p0.x, p1.x, p2.x, p3.x), y: c(p0.y, p1.y, p2.y, p3.y), p: (p1.p ?? 0.5) + ((p2.p ?? 0.5) - (p1.p ?? 0.5)) * u });
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
 }
 
 /** How pressure shapes the line for each instrument. Brushes respond most. */
