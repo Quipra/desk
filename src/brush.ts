@@ -26,14 +26,26 @@ export interface BrushDef {
   multiply: boolean;
   /** Tip follows the stroke direction. */
   oriented: boolean;
+  /** Random size variation per stamp, 0..1 of the stamp size. */
+  sizeJitter: number;
+  /** Random flow variation per stamp, 0..1 of the stamp alpha. */
+  flowJitter: number;
+  /** Random tumble per stamp for non-oriented tips, 0..1 of a full turn. */
+  angleJitter: number;
+  /** Exponent applied to pressure before size and flow, 0.3 (eager) .. 3 (reluctant). */
+  pressureCurve: number;
+  /** Drying stroke: each stamp fades toward the paper as the stroke runs on, 0..1. */
+  wet: number;
+  /** Stamp a second tip at half size for a darker, textured core. */
+  dual: boolean;
 }
 
 /** How each pen kind behaves under the engine. Fineliner stays a crisp vector ribbon. */
 export const BRUSHES: Record<Exclude<Pen["kind"], "fineliner">, BrushDef> = {
-  pencil: { tip: "pencil", spacing: 0.12, sizeBase: 0.75, sizeGain: 0.55, flowBase: 0.35, flowGain: 0.5, scatter: 0.08, grain: 0.85, multiply: true, oriented: false },
-  marker: { tip: "flat", spacing: 0.07, sizeBase: 0.9, sizeGain: 0.25, flowBase: 0.6, flowGain: 0.3, scatter: 0, grain: 0.2, multiply: true, oriented: true },
-  brush: { tip: "soft", spacing: 0.11, sizeBase: 0.2, sizeGain: 1.5, flowBase: 0.32, flowGain: 0.4, scatter: 0, grain: 0, multiply: false, oriented: false },
-  highlighter: { tip: "flat", spacing: 0.06, sizeBase: 1, sizeGain: 0, flowBase: 0.3, flowGain: 0, scatter: 0, grain: 0.15, multiply: true, oriented: true },
+  pencil: { tip: "pencil", spacing: 0.12, sizeBase: 0.75, sizeGain: 0.55, flowBase: 0.35, flowGain: 0.5, scatter: 0.08, grain: 0.85, multiply: true, oriented: false, sizeJitter: 0.12, flowJitter: 0.1, angleJitter: 1, pressureCurve: 1, wet: 0, dual: false },
+  marker: { tip: "flat", spacing: 0.07, sizeBase: 0.9, sizeGain: 0.25, flowBase: 0.6, flowGain: 0.3, scatter: 0, grain: 0.2, multiply: true, oriented: true, sizeJitter: 0.12, flowJitter: 0.1, angleJitter: 0, pressureCurve: 1, wet: 0, dual: false },
+  brush: { tip: "soft", spacing: 0.11, sizeBase: 0.2, sizeGain: 1.5, flowBase: 0.32, flowGain: 0.4, scatter: 0, grain: 0, multiply: false, oriented: false, sizeJitter: 0.12, flowJitter: 0.1, angleJitter: 0, pressureCurve: 1, wet: 0, dual: false },
+  highlighter: { tip: "flat", spacing: 0.06, sizeBase: 1, sizeGain: 0, flowBase: 0.3, flowGain: 0, scatter: 0, grain: 0.15, multiply: true, oriented: true, sizeJitter: 0.12, flowJitter: 0.1, angleJitter: 0, pressureCurve: 1, wet: 0, dual: false },
 };
 
 const TIP_PX = 96;
@@ -231,6 +243,8 @@ export function stampPath(ctx: CanvasRenderingContext2D, pts: Pt[], pen: Pen, op
   const img = tintedTip(def.tip, opts.color);
   if (!img) return false;
   const seed = Math.round(pts[0].x * 7 + pts[0].y * 13) + (opts.boil ?? 0) * 101;
+  // Pressure is shaped once, then drives both size and flow.
+  const curve = (p: number) => Math.pow(Math.max(0, Math.min(1, p)), def.pressureCurve);
   const size = (p: number) => Math.max(0.6, pen.width * (def.sizeBase + def.sizeGain * p));
   const flow = (p: number) => Math.max(0.02, Math.min(1, def.flowBase + def.flowGain * p));
 
@@ -243,19 +257,23 @@ export function stampPath(ctx: CanvasRenderingContext2D, pts: Pt[], pen: Pen, op
   let carried = 0;
   let travelled = 0;
   let n = 0;
-  const stamp = (x: number, y: number, p: number, angle: number, dist: number) => {
+  const stamp = (x: number, y: number, raw: number, angle: number, dist: number) => {
+    const p = curve(raw);
     let s = size(p);
     if (taperLen > 0) s *= Math.min(1, dist / taperLen, (total - dist) / taperLen, 1) || 0.15;
-    const jitterS = 1 + (noise(n, seed) - 0.5) * 0.12;
+    const jitterS = 1 + (noise(n, seed) - 0.5) * def.sizeJitter;
     const sx = def.scatter ? (noise(n * 3, seed + 1) - 0.5) * def.scatter * s : 0;
     const sy = def.scatter ? (noise(n * 3 + 1, seed + 2) - 0.5) * def.scatter * s : 0;
-    ctx.globalAlpha = opts.opacity * flow(p) * (0.9 + 0.1 * noise(n * 5, seed + 3));
+    // A drying stroke: the deposit thins the further the brush has travelled.
+    const drying = def.wet > 0 && total > 0 ? 1 - def.wet * Math.min(1, dist / total) : 1;
+    ctx.globalAlpha = opts.opacity * flow(p) * (1 - def.flowJitter + def.flowJitter * noise(n * 5, seed + 3)) * drying;
     const w = s * jitterS;
     ctx.save();
     ctx.translate(x + sx, y + sy);
     if (def.oriented) ctx.rotate(angle);
-    else if (def.tip === "chalk" || def.tip === "pencil") ctx.rotate(noise(n, seed + 4) * Math.PI * 2);
+    else if (def.angleJitter > 0) ctx.rotate(noise(n, seed + 4) * Math.PI * 2 * def.angleJitter);
     ctx.drawImage(img, -w / 2, -w / 2, w, w);
+    if (def.dual) ctx.drawImage(img, -w / 4, -w / 4, w / 2, w / 2);
     ctx.restore();
     n++;
   };
@@ -271,7 +289,7 @@ export function stampPath(ctx: CanvasRenderingContext2D, pts: Pt[], pen: Pen, op
       const t = d / segLen;
       const p = (a.p ?? 0.5) + ((b.p ?? 0.5) - (a.p ?? 0.5)) * t;
       stamp(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, p, angle, travelled + d);
-      d += Math.max(0.35, def.spacing * size(p));
+      d += Math.max(0.35, def.spacing * size(curve(p)));
     }
     carried = d - segLen;
     travelled += segLen;
@@ -339,6 +357,9 @@ export function brushFor(pen: Pen): BrushDef {
   if (pen.spacing !== undefined) def.spacing = pen.spacing;
   if (pen.scatter !== undefined) def.scatter = pen.scatter;
   if (pen.grain !== undefined) def.grain = pen.grain;
+  // Dry tips tumble so their texture never repeats along a line, unless the
+  // brush was designed with its own angleJitter.
+  if ((def.tip === "chalk" || def.tip === "pencil") && pen.engine?.angleJitter === undefined) def.angleJitter = 1;
   if (pen.engine) Object.assign(def, pen.engine);
   return def;
 }

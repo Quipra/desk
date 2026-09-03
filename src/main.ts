@@ -1,4 +1,6 @@
 import "./style.css";
+import "./select.css";
+import "./inspector.css";
 import { applyTheme, type Theme } from "./appearance.ts";
 import { exportPNG, exportSVG, exportVideo } from "./export.ts";
 import { ICONS, type IconName } from "./icons.ts";

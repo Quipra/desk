@@ -1,0 +1,220 @@
+/* The inspector panel. It sits over the sheet, so it stays a quiet white pill
+   with the same tokens, radii and mono labels as the tray and the layers list. */
+
+.inspector {
+  padding: 4px 2px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--tray) 92%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: var(--pill-shadow);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  scrollbar-width: thin;
+}
+
+.insp-sec {
+  padding: 6px 8px 8px;
+}
+.insp-sec + .insp-sec {
+  border-top: 1px solid var(--line);
+}
+
+.insp-title {
+  margin: 0 0 6px;
+  font-family: var(--pixel);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* Header: what is selected, then its name and layer. */
+.insp-count {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.insp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.insp-row + .insp-row {
+  margin-top: 4px;
+}
+.insp-label {
+  flex: 0 0 46px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+.insp-ctl {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* Colors reuse the tray's swatches at a size that suits a narrow panel. */
+.inspector .swatch {
+  width: 18px;
+  height: 18px;
+}
+.inspector .swatch:hover {
+  transform: scale(1.12);
+}
+.inspector .swatch.custom {
+  display: inline-block;
+}
+
+.insp-text,
+.insp-select {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.insp-select {
+  cursor: pointer;
+}
+.insp-text::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.insp-text:focus-visible,
+.insp-select:focus-visible {
+  outline: 2px solid var(--agent);
+  outline-offset: 1px;
+}
+
+/* Sliders match the timeline scrubber so the app has one range control. */
+.insp-slider {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.insp-slider input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 18px;
+}
+.insp-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.insp-slider input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--agent);
+  box-shadow: 0 0 0 2px var(--tray);
+}
+.insp-slider input[type="range"]::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+}
+.insp-slider input[type="range"]::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--agent);
+}
+.insp-num {
+  flex: 0 0 30px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Small pills for on/off settings and for order. */
+.insp-toggle {
+  appearance: none;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.insp-toggle:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.insp-toggle.on {
+  background: var(--agent-soft);
+  border-color: var(--agent);
+  color: var(--agent);
+}
+
+/* Icon buttons for align and distribute. */
+.insp-icons {
+  display: flex;
+  gap: 2px;
+}
+.inspector .tool {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+.inspector .tool svg {
+  width: 17px;
+  height: 17px;
+}
+
+.insp-toggle:focus-visible,
+.inspector .tool:focus-visible,
+.inspector .swatch:focus-visible {
+  outline: 2px solid var(--agent);
+  outline-offset: 2px;
+}
+
+/* A color input sitting on the row rather than in a swatch strip. */
+.insp-color {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .inspector {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insp-toggle {
+    transition: none;
+  }
+}

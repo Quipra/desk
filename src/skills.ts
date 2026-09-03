@@ -70,7 +70,7 @@ Paths transform, keyframe, cross with measure, and reveal like every other mark.
     when: "the request is a picture, a mood, a scene or a style rather than a diagram",
     body: `Interpret like an illustrator, do not reproduce a stock diagram. Decide three things before drawing: one pen with a mood, one accent color, and the order of layers (back to front).
 
-PENS WITH CHARACTER. Every pen but the fineliner is a real stamp brush: a tip laid along the stroke, pressure driving size and flow, paper grain breaking the deposit. pencil is graphite on grain; marker is a chisel that multiplies like ink on paper; brush is soft and pressure-sensitive; highlighter is a wide translucent chisel. Vary pressure p along a stroke for life: light in, heavy through, light out. Design your own with make kind brush: tip round|soft|flat|bristle|chalk|pencil, spacing (0.05 dense .. 0.4 dotted), scatter (0..1 spray), grain (0..1), taper, opacity. Examples: dry brush = bristle, spacing 0.08, grain 0.6; ink wash = soft, opacity 0.35, width 18; charcoal = chalk, grain 0.8, scatter 0.1; spray = round, spacing 0.3, scatter 0.9, opacity 0.2.
+BRUSH STUDIO. Every pen but the fineliner is a stamp brush; make kind brush names your own; use it as pen { brush: name }. pen.engine: tip round|soft|flat|bristle|chalk|pencil (stamp shape), spacing (0.05 dense..0.4 dotted), sizeBase/sizeGain (size at pressure 0/1), flowBase/flowGain (alpha at 0/1), scatter (spray), grain (paper eats the deposit), multiply (ink darkens), oriented (tip follows the line), sizeJitter/flowJitter (per-stamp variation), angleJitter (tumble), pressureCurve (0.3 eager..3 reluctant), wet (the stroke dries as it runs), dual (half-size core). Also shadow, glow, blur. Dry brush {tip:bristle, spacing:0.08, grain:0.6, flowJitter:0.35, wet:0.5}; ink wash {tip:soft, spacing:0.05, flowBase:0.1, sizeGain:2} at width 18; charcoal {tip:chalk, grain:0.85, scatter:0.12, dual:true}; spray {tip:round, spacing:0.3, scatter:0.9, flowBase:0.15, sizeJitter:0.6}. Vary pressure p along a stroke: light in, heavy through, light out.
 
 SHADING. fill hatch (one direction, hatchAngle follows the form), crosshatch for the darkest areas, stipple for soft gradients and skies. Vary width: thick near, thin far. Leave paper empty where the light hits.
 
@@ -88,9 +88,11 @@ CURVES. ease into a key: linear, ease, easeIn, easeOut, easeInOut, bounce, or be
 
 PRESETS. edit { preset, at, stagger }: rise, drop, pop, fade, wipe (write-on), typewriter, breathe, spin, shake, drift (wiggle), sketchy (line boil), fadeOut, sink. stagger cascades a group. Make your own with make kind motion { keys, wiggle, boil } and apply it the same way.
 
+MOTION PRINCIPLES. easeOut for arrivals, easeIn for departures. Anticipate: a small move the other way first. Overshoot then settle (1.1 then 1). Follow through on trailing parts 2-4 frames late. Arc, don't slide: two keys whose dx and dy bow. stagger 2-4 frames between siblings. Secondary wiggle on light things. Hold poses long enough to read. 12 fps for hand-drawn, 24 for smooth.
+
 HAND-DRAWN LIFE. wiggle { amp, freq } for float; boil for a shimmering edge; reveal keys for a construction appearing step by step.
 
-PLAYBACK. Adding keys plays once; timeline play/pause/seek control it; look { at } shows the pose at a time. Keep loops under a few seconds; stagger groups by a few frames; at 12 fps a frame is 1/12 s, so frame-by-frame means a key per frame or a duplicate per frame.`,
+PLAYBACK. Adding keys plays once; timeline play/pause/seek control it; look { at } shows the pose at a time. Keep loops under a few seconds; at 12 fps a frame is 1/12 s, so frame-by-frame means a key or a duplicate per frame.`,
   },
   recipes: {
     when: "you will draw something more than once, or want a brush or motion of your own",
@@ -115,6 +117,8 @@ To explain, draw next to their mark rather than over it, and keep your marks in 
     body: `Groups are layers. Give every mark a group; the person sees groups in a panel with visibility and order.
 
 edit { group, hidden: true|false } shows or hides. edit { group, order: "front"|"back" } changes drawing order (later draws on top). edit { group, regroup } renames. erase { group } removes.
+
+TIDY. edit { group, align } lines the selection up by its bounds: left, center, right across, top, middle, bottom down; toPaper: true aligns to the sheet instead. edit { group, distribute: "horizontal"|"vertical" } spaces the selection evenly between its outermost two marks.
 
 PASTE. edit { ids|group, duplicate: true, dx, dy, scale, rotate, regroup } makes edited copies and leaves the originals. Stamp a leaf three times with different scale and rotate for a bush; a recipe with $params is the alternative when the copies differ in more than transform.
 

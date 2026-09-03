@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { Paper, pathProgress, smooth } from "../src/paper.ts";
 import { bbox, PEN_PRESETS, Scene } from "../src/scene.ts";
+import { brushFor } from "../src/brush.ts";
 import { registerDesk } from "../src/webmcp.ts";
 import { describe } from "../src/look.ts";
 import { inkColor, THEMES } from "../src/appearance.ts";
@@ -151,6 +152,81 @@ test("edit restyles, moves, duplicates and regroups without redrawing", async ()
   assert.equal(scaled.marks[0].bbox.w, 400 + 2 * 2.5);
   assert.ok("error" in (await desk.call("edit", { ids: [top.id] }) as object));
   assert.equal((await desk.call("erase", { group: "copy" }) as { removed: string[] }).removed.length, 1);
+});
+
+test("edit lines a selection up and spaces it evenly", async () => {
+  installDocument({ registerTool() {} });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  await desk.call("construct", { steps: [
+    { tool: "stencil", shape: "rectangle", x: 200, y: 300, w: 100, h: 60, label: "a", group: "row" },
+    { tool: "stencil", shape: "rectangle", x: 400, y: 420, w: 200, h: 60, label: "b", group: "row" },
+    { tool: "stencil", shape: "rectangle", x: 900, y: 500, w: 60, h: 60, label: "c", group: "row" },
+  ] });
+  const boxes = () => scene.items.map((item) => bbox(item));
+
+  const top = Math.min(...boxes().map((b) => b.y));
+  const aligned = await desk.call("edit", { group: "row", align: "top" }) as { edited: string[]; moved: string[] };
+  assert.equal(aligned.edited.length, 3);
+  assert.equal(aligned.moved.length, 2, "the topmost mark was already there");
+  for (const b of boxes()) assert.ok(Math.abs(b.y - top) < 1e-9, "every mark sits on the same top edge");
+
+  const spread = await desk.call("edit", { group: "row", distribute: "horizontal" }) as { moved: string[] };
+  assert.deepEqual(spread.moved, [scene.items[1].id], "only the inner mark moves");
+  const across = boxes();
+  const gaps = [1, 2].map((n) => across[n].x - (across[n - 1].x + across[n - 1].w));
+  assert.ok(Math.abs(gaps[0] - gaps[1]) < 1e-9, `uneven gaps: ${gaps.join(", ")}`);
+
+  await desk.call("edit", { ids: [scene.items[2].id], align: "center", toPaper: true });
+  const centred = bbox(scene.items[2]);
+  assert.ok(Math.abs(centred.x + centred.w / 2 - 600) < 1e-9, "toPaper centres on the sheet");
+
+  assert.deepEqual(await desk.call("edit", { group: "row", align: "sideways" }), { error: "align must be one of left, center, right, top, middle, bottom" });
+});
+
+test("a pen carries a whole brush engine and its effects through draw", async () => {
+  installDocument({ registerTool() {} });
+  Object.defineProperty(globalThis, "CSS", { configurable: true, value: { supports: () => true } });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  const engine = {
+    tip: "bristle", spacing: 0.08, sizeBase: 0.3, sizeGain: 1.2, flowBase: 0.2, flowGain: 0.4, scatter: 0.6, grain: 0.7,
+    multiply: false, oriented: false, sizeJitter: 0.4, flowJitter: 0.3, angleJitter: 0.5, pressureCurve: 1.6, wet: 0.5, dual: true,
+  };
+  await desk.call("draw", {
+    points: [{ x: 300, y: 300, p: 0.2 }, { x: 500, y: 340, p: 0.9 }],
+    label: "dry stroke",
+    pen: { kind: "brush", width: 12, engine, shadow: { dx: 8, dy: 10, blur: 12, color: "accent" }, glow: { blur: 20 }, blur: 4 },
+  });
+  const pen = scene.items[0].pen;
+  assert.deepEqual(pen.engine, engine);
+  assert.deepEqual(pen.shadow, { dx: 8, dy: 10, blur: 12, color: "#e5484d" });
+  assert.deepEqual(pen.glow, { blur: 20, color: "auto" });
+  assert.equal(pen.blur, 4);
+  assert.deepEqual(brushFor(pen), engine, "the engine reaches the stamp brush whole");
+
+  // Engine blocks merge field by field; an empty one drops back to the kind.
+  const merged = await desk.call("edit", { ids: [scene.items[0].id], pen: { engine: { wet: 0.1 } } }) as { edited: string[] };
+  assert.equal(merged.edited.length, 1);
+  assert.deepEqual(scene.items[0].pen.engine, { ...engine, wet: 0.1 });
+  await desk.call("edit", { ids: [scene.items[0].id], pen: { engine: {}, shadow: {} } });
+  assert.equal(scene.items[0].pen.engine, undefined);
+  assert.equal(scene.items[0].pen.shadow, undefined);
+  assert.equal(brushFor(scene.items[0].pen).tip, "soft", "a brush pen falls back to its own tip");
+
+  const made = await desk.call("make", { kind: "brush", name: "drybrush", description: "scratchy", pen: { kind: "brush", engine: { tip: "bristle", wet: 0.6 } } }) as { name: string };
+  assert.equal(made.name, "drybrush");
+  const seen = await desk.call("look", {}) as { custom: { brushes: { name: string; tip: string }[] } };
+  assert.deepEqual(seen.custom.brushes, [{ name: "drybrush", tip: "bristle", description: "scratchy" }]);
+
+  assert.deepEqual(
+    await desk.call("draw", { points: [{ x: 10, y: 10 }], label: "bad", pen: { engine: { pressureCurve: 9 } } }),
+    { error: "engine.pressureCurve must be between 0.3 and 3" },
+  );
+  assert.deepEqual(
+    await desk.call("draw", { points: [{ x: 10, y: 10 }], label: "bad", pen: { shadow: { blur: 500 } } }),
+    { error: "shadow.blur must be between 0 and 80" },
+  );
 });
 
 test("make creates brushes and recipes the agent can reuse", async () => {

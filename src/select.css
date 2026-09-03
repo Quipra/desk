@@ -1,0 +1,10 @@
+/* The select tool draws its box and handles on the canvas, so its palette lives
+   here beside the rest of the theme instead of being hard-coded in select.ts.
+   select.ts reads these with getComputedStyle, the same way it reads --agent.
+   Imported from main.ts, next to style.css. */
+:root {
+  /* Wash inside the marquee while a box is being dragged. */
+  --select-marquee: color-mix(in srgb, var(--agent) 12%, transparent);
+  /* Handle interiors: paper-colored so the accent outline reads on any sheet. */
+  --select-handle: var(--paper, #ffffff);
+}

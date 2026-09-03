@@ -570,6 +570,7 @@ export class Paper {
       ctx.globalAlpha *= pen.opacity;
       ctx.lineWidth = pen.width;
       if (pen.dash) ctx.setLineDash([Math.max(6, pen.width * 3), Math.max(5, pen.width * 2.5)]);
+      applyEffects(ctx, pen);
     }
     switch (item.kind) {
       case "stroke":
@@ -834,6 +835,31 @@ export class Paper {
       ctx.fill();
     }
   }
+}
+
+/**
+ * Shadow, glow and blur for one mark. Canvas shadows and filters are measured in
+ * device pixels while the context is transformed into paper units, so every size
+ * is scaled by the current transform. There is only one shadow slot, so a glow
+ * takes it over from a drop shadow when a pen asks for both.
+ */
+function applyEffects(ctx: CanvasRenderingContext2D, pen: Pen) {
+  if (!pen.shadow && !pen.glow && !pen.blur) return;
+  const s = typeof ctx.getTransform === "function" ? ctx.getTransform().a || 1 : 1;
+  if (pen.shadow) {
+    ctx.shadowOffsetX = pen.shadow.dx * s;
+    ctx.shadowOffsetY = pen.shadow.dy * s;
+    ctx.shadowBlur = pen.shadow.blur * s;
+    ctx.shadowColor = pen.shadow.color;
+  }
+  if (pen.glow) {
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.shadowBlur = pen.glow.blur * s;
+    ctx.shadowColor = pen.glow.color;
+  }
+  // Older canvases have no filter support; the mark still draws, just unblurred.
+  if (pen.blur && "filter" in ctx) ctx.filter = `blur(${pen.blur * s}px)`;
 }
 
 /** An offscreen canvas for dried ink, when the environment can make one. */

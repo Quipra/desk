@@ -6,6 +6,8 @@
 // definitions: type, properties, required, enum, items, description,
 // additionalProperties. Ranges and lengths are validated in code instead.
 
+import { align, ALIGNS, AXES, distribute, type Align, type Axis } from "./arrange.ts";
+import { brushFor, TIPS, type BrushDef } from "./brush.ts";
 import { coreGuide, SKILL_NAMES, SKILLS, skillIndex } from "./skills.ts";
 import { intersections, properties } from "./geometry.ts";
 import { describe } from "./look.ts";
@@ -92,10 +94,46 @@ const region = {
   additionalProperties: false,
 };
 const penKinds = Object.keys(PEN_PRESETS);
+// The whole brush studio: every engine parameter, merged over the tip's defaults.
+const engine = {
+  type: "object",
+  description: "brush engine, merged field by field over the kind's defaults",
+  properties: {
+    tip: { type: "string", enum: TIPS, description: "stamp shape laid along the stroke" },
+    spacing: { type: "number", description: "stamp spacing as a fraction of size, 0.02 dense .. 1 dotted" },
+    sizeBase: { type: "number", description: "size at pressure 0, times width, 0..4" },
+    sizeGain: { type: "number", description: "extra size at pressure 1, times width, 0..4" },
+    flowBase: { type: "number", description: "per-stamp alpha at pressure 0, 0..1" },
+    flowGain: { type: "number", description: "extra per-stamp alpha at pressure 1, 0..1" },
+    scatter: { type: "number", description: "random offset across the path, 0..2 of size" },
+    grain: { type: "number", description: "paper grain eating the deposit, 0..1" },
+    multiply: { type: "boolean", description: "multiply blending, the way ink darkens on paper" },
+    oriented: { type: "boolean", description: "tip follows the stroke direction, for chisels" },
+    sizeJitter: { type: "number", description: "random size variation per stamp, 0..1" },
+    flowJitter: { type: "number", description: "random alpha variation per stamp, 0..1" },
+    angleJitter: { type: "number", description: "random tumble per stamp, 0..1 of a full turn, non-oriented tips" },
+    pressureCurve: { type: "number", description: "exponent on pressure: 0.3 eager, 1 linear, 3 reluctant" },
+    wet: { type: "number", description: "drying stroke: fade toward the paper along the stroke, 0..1" },
+    dual: { type: "boolean", description: "stamp a second tip at half size for a textured core" },
+  },
+  additionalProperties: false,
+};
+const shadow = {
+  type: "object",
+  description: "drop shadow: dx and dy -200..200, blur 0..80, color; {} removes it",
+  properties: { dx: { type: "number" }, dy: { type: "number" }, blur: { type: "number" }, color: { type: "string" } },
+  additionalProperties: false,
+};
+const glow = {
+  type: "object",
+  description: "halo around the mark: blur 0..80, color; {} removes it",
+  properties: { blur: { type: "number" }, color: { type: "string" } },
+  additionalProperties: false,
+};
 const pen = {
   type: "object",
   description:
-    "Pen for this mark: kind, or brush (a name you made with make), color by name (ink, accent, blue, green, ochre) or hex, width 1..64, opacity 0.05..1, dash for construction lines, texture grain|chalk, taper for thin ends, fill hatch|crosshatch|stipple and/or fillColor (solid) for closed paths, shapes and circles, hatchAngle. Brush engine: tip (round, soft, flat, bristle, chalk, pencil), spacing, scatter, grain.",
+    "Pen for this mark: kind, or brush (a name you made with make), color by name (ink, accent, blue, green, ochre) or hex, width 1..64, opacity 0.05..1, dash for construction lines, texture grain|chalk, taper for thin ends, fill hatch|crosshatch|stipple and/or fillColor (solid) for closed paths, shapes and circles, hatchAngle. Brush engine: tip (round, soft, flat, bristle, chalk, pencil), spacing, scatter, grain, or engine { ... } for every studio parameter. Effects: shadow, glow, blur 0..80.",
   properties: {
     kind: { type: "string", enum: penKinds },
     brush: { type: "string", description: "name of a brush made with make" },
@@ -108,10 +146,14 @@ const pen = {
     fill: { type: "string", enum: ["hatch", "crosshatch", "stipple", "none"] },
     hatchAngle: { type: "number" },
     fillColor: { type: "string", description: "solid fill for closed paths, shapes and circles: palette name, hex, auto, or none" },
-    tip: { type: "string", enum: ["round", "soft", "flat", "bristle", "chalk", "pencil"], description: "brush tip stamped along the stroke" },
+    tip: { type: "string", enum: TIPS, description: "brush tip stamped along the stroke" },
     spacing: { type: "number", description: "stamp spacing as a fraction of size, 0.03..0.5" },
     scatter: { type: "number", description: "stamp scatter across the path, 0..1" },
     grain: { type: "number", description: "paper grain strength 0..1" },
+    engine,
+    shadow,
+    glow,
+    blur: { type: "number", description: "soften the whole mark, 0..80 paper units; 0 removes it" },
   },
   additionalProperties: false,
 };
@@ -142,6 +184,11 @@ const keyframeFields = {
 const layerFields = {
   hidden: { type: "boolean", description: "hide or show the selected marks (they stay in the scene)" },
   order: { type: "string", enum: ["front", "back"], description: "bring to front or send to back of the drawing order" },
+};
+const arrangeFields = {
+  align: { type: "string", enum: ALIGNS, description: "line the selected marks up by their bounds: left, center, right across, top, middle, bottom down" },
+  distribute: { type: "string", enum: AXES, description: "space the selected marks evenly between the outermost two" },
+  toPaper: { type: "boolean", description: "align to the sheet instead of to the selection's own bounds" },
 };
 const timelineFields = {
   action: { type: "string", enum: ["play", "pause", "seek", "set", "clear"] },
@@ -298,7 +345,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       return { id: item.id, label: item.label, segments: segments.length, bbox: box(item) };
     },
     edit(i: Record<string, unknown>) {
-      const targets = select(i);
+      let targets = select(i);
       if (targets.length === 0) return { edited: [], note: "nothing matched" };
       const animating = i.at !== undefined || i.preset !== undefined || i.wiggle !== undefined || i.boil !== undefined || i.clearMotion === true;
       if (animating) return animate(targets, i);
@@ -315,8 +362,35 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
           scene.reorder(targets.map((t) => t.id), where);
           out.order = where;
         }
-        const more = ["pen", "dx", "dy", "scale", "rotate", "label", "regroup", "duplicate"].some((k) => i[k] !== undefined);
+        const more = ["pen", "dx", "dy", "scale", "rotate", "label", "regroup", "duplicate", "align", "distribute"].some((k) => i[k] !== undefined);
         if (!more) return out;
+      }
+      // Arrangement treats the selection as a set and only ever slides marks,
+      // so it runs before any per-mark edit in the same call.
+      if (i.align !== undefined || i.distribute !== undefined) {
+        if (i.toPaper !== undefined && typeof i.toPaper !== "boolean") throw new Error("toPaper must be true or false");
+        const toPaper = i.toPaper === true;
+        const picked = targets.map((item) => item.id);
+        const arranged = new Set<string>();
+        if (i.align !== undefined) {
+          const how = requiredText(i.align, "align");
+          if (!(ALIGNS as string[]).includes(how)) throw new Error(`align must be one of ${ALIGNS.join(", ")}`);
+          for (const item of align(scene, picked, how as Align, toPaper)) arranged.add(item.id);
+        }
+        if (i.distribute !== undefined) {
+          const axis = requiredText(i.distribute, "distribute");
+          if (!(AXES as string[]).includes(axis)) throw new Error(`distribute must be one of ${AXES.join(", ")}`);
+          for (const item of distribute(scene, picked, axis as Axis)) arranged.add(item.id);
+        }
+        targets = picked.map((id) => scene.get(id)!).filter(Boolean);
+        const more = ["pen", "dx", "dy", "scale", "rotate", "label", "regroup", "duplicate"].some((k) => i[k] !== undefined);
+        if (!more) {
+          return {
+            edited: picked,
+            moved: [...arranged],
+            marks: targets.map((item) => ({ id: item.id, label: item.label, bbox: box(item) })),
+          };
+        }
       }
       const t = {
         dx: i.dx === undefined ? undefined : ranged(i.dx, "dx", -PAPER_W, PAPER_W),
@@ -526,7 +600,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       appearance: { theme, background: THEMES[theme].paper, defaultInk: THEMES[theme].ink },
       pen: { ...held },
       custom: {
-        brushes: [...brushes].map(([name, b]) => ({ name, description: b.description })),
+        brushes: [...brushes].map(([name, b]) => ({ name, tip: brushFor(b.pen).tip, description: b.description })),
         recipes: [...recipes].map(([name, r]) => ({ name, params: r.params, description: r.description })),
         motions: [...motions].map(([name, m]) => ({ name, keys: m.motion.keys.length, description: m.description })),
       },
@@ -674,7 +748,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       name: "edit",
       annotations: { readOnlyHint: false },
       description:
-        "Change existing marks without redrawing, or animate them. Select by ids, group and/or region, then any of: pen (restyle), dx/dy (move), scale (about a point, default the mark's center), rotate (degrees clockwise), label, regroup, duplicate (edit copies, keep originals). With at (seconds) the same fields become a KEYFRAME instead: the mark tweens there from its previous key with ease or bezier; opacity and reveal (write-on) are keyable too. wiggle adds smooth random drift, boil re-noises the edge like hand-drawn animation, preset applies a built-in motion (rise, drop, pop, fade, wipe, typewriter, breathe, spin, shake, drift, sketchy, fadeOut, sink) or one you made, stagger cascades a group. hidden and order manage layers. Playback starts automatically.",
+        "Change existing marks without redrawing, or animate them. Select by ids, group and/or region, then any of: pen (restyle), dx/dy (move), scale (about a point, default the mark's center), rotate (degrees clockwise), label, regroup, duplicate (edit copies, keep originals). With at (seconds) the same fields become a KEYFRAME instead: the mark tweens there from its previous key with ease or bezier; opacity and reveal (write-on) are keyable too. wiggle adds smooth random drift, boil re-noises the edge like hand-drawn animation, preset applies a built-in motion (rise, drop, pop, fade, wipe, typewriter, breathe, spin, shake, drift, sketchy, fadeOut, sink) or one you made, stagger cascades a group. align (left, center, right, top, middle, bottom) lines the selection up by its bounds, toPaper: true against the sheet instead; distribute (horizontal, vertical) spaces it evenly between the outermost two. hidden and order manage layers. Playback starts automatically.",
       inputSchema: {
         type: "object",
         properties: {
@@ -691,6 +765,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
           regroup: { type: "string", description: "new group name for the selected marks" },
           duplicate: { type: "boolean" },
           ...layerFields,
+          ...arrangeFields,
           ...keyframeFields,
         },
         additionalProperties: false,
@@ -722,7 +797,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       name: "make",
       annotations: { readOnlyHint: false },
       description:
-        "Make your own tool for this session. kind motion: a named animation preset (keys with relative times, wiggle, boil) applied to any marks with edit preset. kind brush: a named pen you design (kind, color, width, opacity, dash, texture grain|chalk, taper, fill hatch|crosshatch|stipple) and then use anywhere as pen: { brush: name }. kind recipe: a named list of construct steps with parameters, written as JSON text in steps; any number in a step may be an expression over $params such as \"($A.x+$B.x)/2\" or \"hypot($B.x-$A.x,$B.y-$A.y)/2\" (functions: sqrt abs min max hypot sin cos tan atan2 round). Use a recipe as a construct step { tool: recipe, name, args }. Making a name again replaces it.",
+        "Make your own tool for this session. kind motion: a named animation preset (keys with relative times, wiggle, boil) applied to any marks with edit preset. kind brush: a named pen you design (kind, color, width, opacity, dash, texture, taper, fill, effects shadow|glow|blur, and a full engine block: tip, spacing, sizeBase, sizeGain, flowBase, flowGain, scatter, grain, multiply, oriented, sizeJitter, flowJitter, angleJitter, pressureCurve, wet, dual) and then use anywhere as pen: { brush: name }. kind recipe: a named list of construct steps with parameters, written as JSON text in steps; any number in a step may be an expression over $params such as \"($A.x+$B.x)/2\" or \"hypot($B.x-$A.x,$B.y-$A.y)/2\" (functions: sqrt abs min max hypot sin cos tan atan2 round). Use a recipe as a construct step { tool: recipe, name, args }. Making a name again replaces it.",
       inputSchema: {
         type: "object",
         properties: {
@@ -841,6 +916,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
                 args: recipeArgs,
                 d: { type: "string", description: "path: SVG path data" },
                 ...layerFields,
+                ...arrangeFields,
                 ...keyframeFields,
                 ...timelineFields,
               },
@@ -982,7 +1058,20 @@ function resolvePenWith(base: Pen, input: unknown, brushes: Map<string, { pen: P
   if (i.kind !== undefined) {
     const kind = requiredText(i.kind, "kind") as PenKind;
     if (!Object.hasOwn(PEN_PRESETS, kind)) throw new Error(`kind must be one of ${penKinds.join(", ")}`);
-    next = { ...PEN_PRESETS[kind], color: kind === "highlighter" ? PEN_PRESETS.highlighter.color : next.color, dash: next.dash, texture: next.texture, taper: next.taper, fill: next.fill, hatchAngle: next.hatchAngle };
+    // A kind is a fresh instrument: it keeps the pen's styling and effects but
+    // drops the brush engine, which belonged to the old tip.
+    next = {
+      ...PEN_PRESETS[kind],
+      color: kind === "highlighter" ? PEN_PRESETS.highlighter.color : next.color,
+      dash: next.dash,
+      texture: next.texture,
+      taper: next.taper,
+      fill: next.fill,
+      hatchAngle: next.hatchAngle,
+      shadow: next.shadow,
+      glow: next.glow,
+      blur: next.blur,
+    };
     delete next.brush;
   }
   if (i.color !== undefined) next.color = cssColor(i.color);
@@ -1016,8 +1105,85 @@ function resolvePenWith(base: Pen, input: unknown, brushes: Map<string, { pen: P
   if (i.spacing !== undefined) next.spacing = ranged(i.spacing, "spacing", 0.03, 0.5);
   if (i.scatter !== undefined) next.scatter = ranged(i.scatter, "scatter", 0, 1);
   if (i.grain !== undefined) next.grain = ranged(i.grain, "grain", 0, 1);
-  for (const key of ["dash", "taper", "texture", "fill", "hatchAngle", "brush", "fillColor", "tip", "spacing", "scatter", "grain"] as const) if (next[key] === undefined || next[key] === false) delete next[key];
+  if (i.engine !== undefined) next.engine = readEngine(i.engine, next.engine);
+  if (i.blur !== undefined) {
+    const b = ranged(i.blur, "blur", 0, 80);
+    next.blur = b > 0 ? b : undefined;
+  }
+  if (i.shadow !== undefined) next.shadow = readShadow(i.shadow, next.shadow);
+  if (i.glow !== undefined) next.glow = readGlow(i.glow, next.glow);
+  for (const key of ["dash", "taper", "texture", "fill", "hatchAngle", "brush", "fillColor", "tip", "spacing", "scatter", "grain", "engine", "shadow", "glow", "blur"] as const) {
+    if (next[key] === undefined || next[key] === false) delete next[key];
+  }
   return next;
+}
+
+/** The one place brush engine ranges live; merges field by field onto what the pen had. */
+type EngineNumber = "spacing" | "sizeBase" | "sizeGain" | "flowBase" | "flowGain" | "scatter" | "grain" | "sizeJitter" | "flowJitter" | "angleJitter" | "pressureCurve" | "wet";
+const ENGINE_RANGES: Record<EngineNumber, [number, number]> = {
+  spacing: [0.02, 1],
+  sizeBase: [0, 4],
+  sizeGain: [0, 4],
+  flowBase: [0, 1],
+  flowGain: [0, 1],
+  scatter: [0, 2],
+  grain: [0, 1],
+  sizeJitter: [0, 1],
+  flowJitter: [0, 1],
+  angleJitter: [0, 1],
+  pressureCurve: [0.3, 3],
+  wet: [0, 1],
+};
+
+function readEngine(v: unknown, base: Pen["engine"]): Pen["engine"] {
+  const raw = plainObject(v, "engine");
+  const keys = Object.keys(raw);
+  // An empty block clears a brush back to its kind's engine.
+  if (keys.length === 0) return undefined;
+  const def: Partial<BrushDef> = { ...(base ?? {}) };
+  for (const key of keys) {
+    if (key === "tip") {
+      const tip = requiredText(raw.tip, "engine.tip");
+      if (!(TIPS as string[]).includes(tip)) throw new Error(`engine.tip must be one of ${TIPS.join(", ")}`);
+      def.tip = tip as BrushDef["tip"];
+      continue;
+    }
+    if (key === "multiply" || key === "oriented" || key === "dual") {
+      if (typeof raw[key] !== "boolean") throw new Error(`engine.${key} must be true or false`);
+      def[key] = raw[key] as boolean;
+      continue;
+    }
+    if (!Object.hasOwn(ENGINE_RANGES, key)) throw new Error(`engine has no field ${key}; see the pen schema`);
+    const [min, max] = ENGINE_RANGES[key as EngineNumber];
+    def[key as EngineNumber] = ranged(raw[key], `engine.${key}`, min, max);
+  }
+  return def;
+}
+
+function readShadow(v: unknown, base: Pen["shadow"]): Pen["shadow"] {
+  const raw = plainObject(v, "shadow");
+  if (Object.keys(raw).length === 0) return undefined;
+  const had = base ?? { dx: 6, dy: 6, blur: 8, color: "auto" };
+  return {
+    dx: raw.dx === undefined ? had.dx : ranged(raw.dx, "shadow.dx", -200, 200),
+    dy: raw.dy === undefined ? had.dy : ranged(raw.dy, "shadow.dy", -200, 200),
+    blur: raw.blur === undefined ? had.blur : ranged(raw.blur, "shadow.blur", 0, 80),
+    color: raw.color === undefined ? had.color : cssColor(raw.color),
+  };
+}
+
+function readGlow(v: unknown, base: Pen["glow"]): Pen["glow"] {
+  const raw = plainObject(v, "glow");
+  if (Object.keys(raw).length === 0) return undefined;
+  const had = base ?? { blur: 12, color: "auto" };
+  const blur = raw.blur === undefined ? had.blur : ranged(raw.blur, "glow.blur", 0, 80);
+  if (blur === 0) return undefined;
+  return { blur, color: raw.color === undefined ? had.color : cssColor(raw.color) };
+}
+
+function plainObject(v: unknown, name: string): Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error(`${name} must be an object`);
+  return v as Record<string, unknown>;
 }
 
 function box(item: Item) {

@@ -11,6 +11,8 @@ CURVES. ease into a key: linear, ease, easeIn, easeOut, easeInOut, bounce, or be
 
 PRESETS. edit { preset, at, stagger }: rise, drop, pop, fade, wipe (write-on), typewriter, breathe, spin, shake, drift (wiggle), sketchy (line boil), fadeOut, sink. stagger cascades a group. Make your own with make kind motion { keys, wiggle, boil } and apply it the same way.
 
+MOTION PRINCIPLES. easeOut for arrivals, easeIn for departures. Anticipate: a small move the other way first. Overshoot then settle (1.1 then 1). Follow through on trailing parts 2-4 frames late. Arc, don't slide: two keys whose dx and dy bow. stagger 2-4 frames between siblings. Secondary wiggle on light things. Hold poses long enough to read. 12 fps for hand-drawn, 24 for smooth.
+
 HAND-DRAWN LIFE. wiggle { amp, freq } for float; boil for a shimmering edge; reveal keys for a construction appearing step by step.
 
-PLAYBACK. Adding keys plays once; timeline play/pause/seek control it; look { at } shows the pose at a time. Keep loops under a few seconds; stagger groups by a few frames; at 12 fps a frame is 1/12 s, so frame-by-frame means a key per frame or a duplicate per frame.
+PLAYBACK. Adding keys plays once; timeline play/pause/seek control it; look { at } shows the pose at a time. Keep loops under a few seconds; at 12 fps a frame is 1/12 s, so frame-by-frame means a key or a duplicate per frame.

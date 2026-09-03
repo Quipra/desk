@@ -50,7 +50,7 @@ Fifteen tools registered with `document.modelContext.registerTool` (with a `navi
 
 **Vectors and layers.** `path` takes SVG path data and makes a real vector mark that fills, transforms, animates and crosses like everything else. Groups are layers: a panel on the right lists them with visibility and z-order, and `edit` can hide, show, and reorder.
 
-Five pens: pencil, fineliner, marker, brush, highlighter. Every pen can be dashed, tapered, textured (grain or chalk), and can fill closed shapes and circles with hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
+Five pens: pencil, fineliner, marker, brush, highlighter. Every pen but the fineliner is a stamp brush: a tip image laid along the stroke with pressure driving size and flow, seeded jitter, and a paper-grain mask; markers and highlighters multiply like ink. Nothing about a brush is fixed: the agent can set tip, spacing, scatter, grain, size and flow curves, jitter, wet edges, and effects (shadow, glow, blur) on any mark, or name a brush once with `make`. Every pen can be dashed, tapered, and can fill closed shapes and circles with a solid color and hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
 
 **Skills, not a manual.** The agent reads the core skill once (about 450 tokens) with an index of eight more, and pulls a topic only when the task calls for it: geometry before a construction, lettering before a label, animation before motion. The same text lives in `skills/*/SKILL.md` for coding agents and humans.
 
@@ -62,7 +62,7 @@ Agent marks reveal progressively with a glow, then settle into plain ink. The **
 
 ## For the person at the desk
 
-A hand-drawn tray: hand, pen, eraser, ruler, compass, stencil, undo and redo (⌘Z, ⌘⇧Z), replay, paper. The row above it holds the active tool's options: five pen kinds, three widths, dash, five inks and a custom color; stencil shapes; paper types. Pinch or ⌘-wheel to zoom, wheel or hand to pan, ⌘0 to fit. The DESK mark opens a menu: new sheet, save (⌘S) to a library kept in the browser, export PNG, SVG, or one loop of the animation as WebM.
+A hand-drawn tray: select (V), hand (H), pen (B), Bézier pen tool (P), eraser (E), ruler, compass, stencil, undo and redo (⌘Z, ⌘⇧Z), replay, paper. Select shows a bounding box with handles to move, scale and rotate; a marquee selects many; ⌘D duplicates; Delete removes. An inspector for the selection edits stroke, fill, brush, effects (shadow, glow, blur), group, order, and aligns or distributes marks. The row above it holds the active tool's options: five pen kinds, three widths, dash, five inks and a custom color; stencil shapes; paper types. Pinch or ⌘-wheel to zoom, wheel or hand to pan, ⌘0 to fit. The DESK mark opens a menu: new sheet, save (⌘S) to a library kept in the browser, export PNG, SVG, or one loop of the animation as WebM.
 
 ## Run locally
 
