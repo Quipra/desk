@@ -8,60 +8,65 @@ Built for the [OpenAI WebMCP Challenge](https://webmcp.devpost.com/), for learni
 
 ## Try it
 
-Live: https://quipra.github.io/desk/ (GitHub Pages; Vercel URL to follow)
+Live: https://quipra.github.io/desk/
 
 Open Desk in a browser with WebMCP:
 
-- **ChatGPT desktop app**: open the URL in the built-in browser. The instruments show up under **Site tools** in the address bar.
+- **ChatGPT desktop app**: open the URL in the built-in browser with GPT-5.6 Sol or Terra (Luna has site tools off). The instruments show up under **Site tools** in the address bar.
 - **Chrome 149+**: turn on `chrome://flags/#enable-webmcp-testing`, reload, and use an agent extension such as Google's [Model Context Tool Inspector](https://developer.chrome.com/docs/ai/webmcp).
 
-Without WebMCP the page still works as a drawing tool; the agent just can't pick up the pens.
+The chip top-right reads "agent: ready" once the instruments are registered. Without WebMCP the page still works as a drawing tool.
 
 Prompts that show it off:
 
+- "Read the guide, then draw a 400-unit segment AB and construct its perpendicular bisector with the compass and ruler."
 - "Draw triangle ABC and its incircle. Label the vertices."
-- "Construct the perpendicular bisector of the line I drew, with a compass."
-- "Look at my sketch and label which angle is 90°."
+- "Look at my sketch and tell me what I drew. Then label it."
 - "Explain the Pythagorean theorem on the paper, step by step."
 
 ## Instruments
 
-Eleven tools, registered with `document.modelContext.registerTool` (falls back to `navigator.modelContext`). All of them write to the same scene a person draws on.
+Twelve tools registered with `document.modelContext.registerTool` (with a `navigator.modelContext` fallback). All of them write to the same scene the person's pointer writes to.
 
 | Tool | On the desk |
 |---|---|
+| `guide` | How the desk works: coordinates, instruments, lettering, ruler-and-compass recipes. Read once per session |
+| `look` | Every mark with id, label, author, pen and bounding box, plus a 48 × 32 map of where ink is |
+| `measure` | Distance and angle between two points, without drawing |
 | `pick_pen` | Pencil, marker, or brush, with color, width, opacity |
-| `draw` | One freehand stroke: points with pressure |
+| `draw` | Freehand: one stroke, or several pen-down paths as one mark. Letters are drawn this way |
 | `ruler` | Straight line, optional arrowhead |
 | `compass` | Circle or arc from a center and radius |
 | `stencil` | Rectangle, triangle, or regular polygon |
-| `write` | A short handwritten label or equation |
-| `measure` | Distance and angle between two points, without drawing |
 | `erase` | By id or region |
 | `undo` | Lift the agent's last mark |
-| `look` | Every mark with id, label, author, and bounding box, plus a coarse text raster of the sheet |
 | `new_sheet` | Fresh paper: blank, grid, or lined |
+| `construct` | Up to 40 instrument steps in one call, for a whole figure |
 
-The paper is 1200 × 800 units, origin top-left. Tool results are JSON, so `look` is how the agent sees: an inventory of marks and a 48 × 32 character map of where ink is.
+The paper is 1200 × 800 units, origin top-left. Tool results are JSON, so `look` is how the agent sees. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
 
-Agent marks reveal progressively with a glow, then settle into plain ink. The **replay** button redraws the whole sheet in order.
+Tool schemas stay inside the JSON Schema subset chat hosts accept for tool definitions (type, properties, required, enum, items, description, additionalProperties). Ranges are validated in code. A test guards this, because a single `oneOf` or `minimum` makes a tool unusable in ChatGPT.
+
+Agent marks reveal progressively with a glow, then settle into plain ink. The **replay** button redraws the whole sheet in order. Charcoal is the default theme with a light-paper toggle; `color: "auto"` follows the theme.
 
 ## Run locally
 
 ```sh
 npm install
-npm run dev
+npm run dev     # http://localhost:5173
+npm test
+npm run build
 ```
 
-In the browser console, `desk.call("draw", { points: [{x: 100, y: 100}, {x: 400, y: 300}], label: "test" })` calls any instrument directly.
+In the browser console, `desk.call(name, input)` calls any instrument directly:
 
-## Deploy
-
-Static Vite build, any host works:
-
-```sh
-npm run build   # outputs dist/
-npx vercel      # or drag dist/ onto Netlify
+```js
+await desk.call("construct", { steps: [
+  { tool: "pick_pen", kind: "marker" },
+  { tool: "ruler", from: { x: 300, y: 400 }, to: { x: 900, y: 400 }, label: "segment AB" },
+  { tool: "compass", center: { x: 300, y: 400 }, radius: 380, start: -60, end: 60, label: "arc from A" },
+] });
+await desk.call("look");
 ```
 
 ## Layout
@@ -69,8 +74,11 @@ npx vercel      # or drag dist/ onto Netlify
 - `src/scene.ts` — the shared scene: items, authors, pens, bounding boxes
 - `src/paper.ts` — canvas rendering, ribbon strokes, reveal animation, glow, replay
 - `src/instruments.ts` — the person's pointer gestures
-- `src/webmcp.ts` — the agent's eleven tools
+- `src/webmcp.ts` — the agent's twelve tools, validation and lifecycle
+- `src/guide.ts` — what the `guide` tool returns
 - `src/look.ts` — how the agent sees the sheet
+- `src/appearance.ts` — theme palette shared by DOM and canvas
 - `src/main.ts` — the tray and status UI
+- `SKILL.md` — a short skill for coding agents that build on Desk
 
 MIT.

@@ -1,10 +1,10 @@
 // The person's hands on the desk: pointer gestures become the same scene items
 // the agent's tools produce.
 
-import type { Paper } from "./paper";
-import { bbox, clampPt, PEN_PRESETS, type Item, type Pen, type PenKind, type Pt, type Scene, type StencilShape } from "./scene";
+import type { Paper } from "./paper.ts";
+import { bbox, clampPt, PEN_PRESETS, type Item, type Pen, type PenKind, type Pt, type Scene, type StencilShape } from "./scene.ts";
 
-export type Mode = "pen" | "eraser" | "ruler" | "compass" | "stencil" | "text";
+export type Mode = "pen" | "eraser" | "ruler" | "compass" | "stencil";
 
 const ERASE_RADIUS = 14;
 
@@ -16,25 +16,23 @@ export class Instruments {
   private paper: Paper;
   private down: Pt | null = null;
   private points: Pt[] = [];
-  private onText: (at: Pt) => void;
+  private pointerId: number | null = null;
   onChange: (() => void) | null = null;
 
-  constructor(paper: Paper, scene: Scene, onText: (at: Pt) => void) {
+  constructor(paper: Paper, scene: Scene) {
     this.paper = paper;
     this.scene = scene;
-    this.onText = onText;
     const c = paper.canvas;
     c.style.touchAction = "none";
     c.addEventListener("pointerdown", (e) => this.start(e));
     c.addEventListener("pointermove", (e) => this.move(e));
     c.addEventListener("pointerup", (e) => this.end(e));
-    c.addEventListener("pointercancel", () => this.cancel());
-    c.addEventListener("pointerleave", (e) => {
-      if (this.down) this.end(e);
-    });
+    c.addEventListener("pointercancel", (e) => { if (e.pointerId === this.pointerId) this.cancel(); });
+    c.addEventListener("lostpointercapture", (e) => { if (e.pointerId === this.pointerId) this.cancel(); });
   }
 
   setPenKind(kind: PenKind) {
+    this.cancel();
     const preset = PEN_PRESETS[kind];
     this.pen = { ...preset, color: this.pen.color };
     this.mode = "pen";
@@ -42,12 +40,14 @@ export class Instruments {
   }
 
   setColor(color: string) {
+    this.cancel();
     this.pen = { ...this.pen, color };
     if (this.mode === "eraser") this.mode = "pen";
     this.onChange?.();
   }
 
   setMode(mode: Mode) {
+    this.cancel();
     this.mode = mode;
     this.onChange?.();
   }
@@ -59,43 +59,50 @@ export class Instruments {
   }
 
   private start(e: PointerEvent) {
-    if (e.button !== 0) return;
-    this.paper.canvas.setPointerCapture(e.pointerId);
+    if (e.button !== 0 || this.pointerId !== null || e.isPrimary === false) return;
     const p = this.pt(e);
+    e.preventDefault();
+    this.pointerId = e.pointerId;
+    this.paper.canvas.setPointerCapture(e.pointerId);
     this.down = p;
     this.points = [p];
     if (this.mode === "eraser") this.eraseAt(p);
-    if (this.mode === "text") {
-      this.down = null;
-      this.onText(p);
-      return;
-    }
     this.paper.preview = this.previewItem(p);
     this.paper.render();
   }
 
   private move(e: PointerEvent) {
-    if (!this.down) return;
+    if (!this.down || e.pointerId !== this.pointerId) return;
     const p = this.pt(e);
     if (this.mode === "eraser") {
       this.eraseAt(p);
       return;
     }
     if (this.mode === "pen") {
-      const last = this.points[this.points.length - 1];
-      if (Math.hypot(p.x - last.x, p.y - last.y) < 1.5) return;
-      this.points.push(p);
+      const events = e.getCoalescedEvents?.() ?? [];
+      for (const sample of events.length ? events : [e]) {
+        const next = this.pt(sample);
+        const last = this.points[this.points.length - 1];
+        if (Math.hypot(next.x - last.x, next.y - last.y) >= 1) this.points.push(next);
+      }
     }
     this.paper.preview = this.previewItem(p);
     this.paper.render();
   }
 
   private end(e: PointerEvent) {
-    if (!this.down) return;
+    if (!this.down || e.pointerId !== this.pointerId) return;
     const p = this.pt(e);
+    if (this.mode === "pen") {
+      const last = this.points[this.points.length - 1];
+      // Pointer-up may be the only sample at the final coordinate. Keep its
+      // position but not the zero pressure caused by lifting the stylus.
+      if (p.x !== last.x || p.y !== last.y) this.points.push({ ...p, p: last.p });
+    }
     const item = this.mode === "eraser" ? null : this.previewItem(p);
     this.paper.preview = null;
     this.down = null;
+    this.releasePointer();
     if (item && this.meaningful(item)) {
       const { id: _id, ...rest } = item;
       this.scene.add(rest, { label: rest.label, author: "human", pen: rest.pen });
@@ -106,12 +113,19 @@ export class Instruments {
 
   private cancel() {
     this.down = null;
+    this.releasePointer();
     this.paper.preview = null;
     this.paper.render();
   }
 
+  private releasePointer() {
+    const id = this.pointerId;
+    this.pointerId = null;
+    if (id !== null && this.paper.canvas.hasPointerCapture(id)) this.paper.canvas.releasePointerCapture(id);
+  }
+
   private meaningful(item: Item): boolean {
-    if (item.kind === "stroke") return item.points.length > 0;
+    if (item.kind === "stroke") return item.paths.some((points) => points.length > 0);
     const b = bbox(item);
     return b.w > 4 || b.h > 4;
   }
@@ -122,7 +136,7 @@ export class Instruments {
     const base = { id: "preview", author: "human" as const, pen: this.pen };
     switch (this.mode) {
       case "pen":
-        return { ...base, kind: "stroke", label: `${this.pen.kind} stroke`, points: this.points };
+        return { ...base, kind: "stroke", label: `${this.pen.kind} stroke`, paths: [this.points] };
       case "ruler":
         return { ...base, kind: "line", label: "ruler line", from: d, to: p, arrow: false };
       case "compass":
@@ -155,7 +169,8 @@ function hits(item: Item, p: Pt): boolean {
   const b = bbox(item);
   const r = ERASE_RADIUS;
   if (p.x < b.x - r || p.x > b.x + b.w + r || p.y < b.y - r || p.y > b.y + b.h + r) return false;
-  if (item.kind === "stroke") return item.points.some((q) => Math.hypot(q.x - p.x, q.y - p.y) <= r + item.pen.width);
+  if (item.kind === "stroke") return item.paths.some((points) => points.some((q, index) =>
+    distToSegment(p, points[Math.max(0, index - 1)], q) <= r + item.pen.width));
   if (item.kind === "line") return distToSegment(p, item.from, item.to) <= r + item.pen.width;
   if (item.kind === "arc") return Math.abs(Math.hypot(p.x - item.cx, p.y - item.cy) - item.r) <= r + item.pen.width;
   return true;

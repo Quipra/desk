@@ -11,6 +11,7 @@ export type StencilShape = "rectangle" | "triangle" | "polygon";
 
 export interface Pen {
   kind: PenKind;
+  /** "auto" follows the paper theme; explicit colors are never recolored. */
   color: string;
   width: number;
   opacity: number;
@@ -31,11 +32,10 @@ interface Base {
 }
 
 export type Geometry =
-  | { kind: "stroke"; points: Pt[] }
+  | { kind: "stroke"; paths: Pt[][] }
   | { kind: "line"; from: Pt; to: Pt; arrow: boolean }
   | { kind: "arc"; cx: number; cy: number; r: number; start: number; end: number }
-  | { kind: "shape"; shape: StencilShape; x: number; y: number; w: number; h: number; rotation: number; sides: number }
-  | { kind: "text"; x: number; y: number; text: string; size: number };
+  | { kind: "shape"; shape: StencilShape; x: number; y: number; w: number; h: number; rotation: number; sides: number };
 
 export type Item = Base & Geometry;
 
@@ -47,9 +47,9 @@ export interface BBox {
 }
 
 export const PEN_PRESETS: Record<PenKind, Pen> = {
-  pencil: { kind: "pencil", color: "#1a1a1a", width: 2.5, opacity: 0.9 },
-  marker: { kind: "marker", color: "#1a1a1a", width: 6, opacity: 0.85 },
-  brush: { kind: "brush", color: "#1a1a1a", width: 9, opacity: 0.8 },
+  pencil: { kind: "pencil", color: "auto", width: 2.5, opacity: 0.9 },
+  marker: { kind: "marker", color: "auto", width: 6, opacity: 0.85 },
+  brush: { kind: "brush", color: "auto", width: 9, opacity: 0.8 },
 };
 
 type Listener = (event: SceneEvent) => void;
@@ -80,7 +80,7 @@ export class Scene {
   }
 
   add(geometry: Geometry, meta: { label: string; author: Author; pen: Pen }): Item {
-    const item = { ...geometry, ...meta, id: this.nextId(geometry.kind[0]) } as Item;
+    const item = { ...geometry, ...meta, pen: { ...meta.pen }, id: this.nextId(geometry.kind[0]) } as Item;
     this.items.push(item);
     this.emit({ type: "add", item });
     return item;
@@ -156,7 +156,7 @@ export function shapeVertices(s: Extract<Geometry, { kind: "shape" }>): Pt[] {
 export function bbox(item: Item): BBox {
   switch (item.kind) {
     case "stroke":
-      return ptsBox(item.points, item.pen.width);
+      return ptsBox(item.paths.flat(), item.pen.width);
     case "line":
       return ptsBox([item.from, item.to], item.pen.width);
     case "arc": {
@@ -171,10 +171,6 @@ export function bbox(item: Item): BBox {
     }
     case "shape":
       return ptsBox(shapeVertices(item), item.pen.width);
-    case "text": {
-      const w = item.text.length * item.size * 0.62;
-      return { x: item.x, y: item.y - item.size, w, h: item.size * 1.2 };
-    }
   }
 }
 

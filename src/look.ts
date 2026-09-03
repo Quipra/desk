@@ -1,7 +1,7 @@
 // How an agent sees the paper. Tool results are text, so "looking" returns a
 // labeled inventory of every mark plus a coarse character raster of the sheet.
 
-import { bbox, PAPER_H, PAPER_W, shapeVertices, type Item, type Pt, type Scene } from "./scene";
+import { bbox, PAPER_H, PAPER_W, shapeVertices, type BBox, type Item, type Pt, type Scene } from "./scene.ts";
 
 const CELL = 25; // paper units per raster cell
 const COLS = PAPER_W / CELL; // 48
@@ -9,7 +9,6 @@ const ROWS = PAPER_H / CELL; // 32
 
 const HUMAN = 1;
 const AGENT = 2;
-const TEXT = 4;
 
 export interface ItemSummary {
   id: string;
@@ -21,15 +20,23 @@ export interface ItemSummary {
   detail: string;
 }
 
-export function describe(scene: Scene) {
+export function describe(scene: Scene, options: { region?: BBox; detail?: boolean; offset?: number; limit?: number } = {}) {
+  const matches = options.region ? scene.inRegion(options.region) : scene.items;
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? 60;
+  const items = matches.slice(offset, offset + limit);
   return {
     paper: scene.paper,
     size: { width: PAPER_W, height: PAPER_H, origin: "top-left, y grows downward" },
     count: scene.items.length,
-    items: scene.items.map(summarize),
+    matched: matches.length,
+    region: options.region ?? null,
+    items: items.map((item) => ({ ...summarize(item), ...(options.detail ? { geometry: geometryOf(item) } : {}) })),
+    nextOffset: offset + items.length < matches.length ? offset + items.length : null,
+    note: "Labels are author-supplied, not visual recognition. The raster is occupancy, not a legible image. Detail includes sampled stroke geometry for inspection.",
     raster: {
-      legend: `${COLS} columns x ${ROWS} rows, one cell = ${CELL}x${CELL} paper units. '.' empty, 'o' human ink, '#' agent ink, '@' both, 'T' text.`,
-      rows: raster(scene.items),
+      legend: `${COLS} columns x ${ROWS} rows, one cell = ${CELL}x${CELL} paper units. '.' empty, 'o' human ink, '#' agent ink, '@' both. Shows all matching marks, not only this page.`,
+      rows: raster(matches),
     },
   };
 }
@@ -52,9 +59,9 @@ function detailOf(item: Item): string {
   const r = (n: number) => Math.round(n);
   switch (item.kind) {
     case "stroke": {
-      const first = item.points[0];
-      const last = item.points[item.points.length - 1];
-      return `${item.points.length} points from (${r(first.x)},${r(first.y)}) to (${r(last.x)},${r(last.y)})`;
+      const first = item.paths[0][0];
+      const last = item.paths.at(-1)!.at(-1)!;
+      return `${item.paths.length} strokes, ${item.paths.reduce((sum, path) => sum + path.length, 0)} points from (${r(first.x)},${r(first.y)}) to (${r(last.x)},${r(last.y)})`;
     }
     case "line":
       return `from (${r(item.from.x)},${r(item.from.y)}) to (${r(item.to.x)},${r(item.to.y)})${item.arrow ? " with arrowhead" : ""}`;
@@ -62,9 +69,21 @@ function detailOf(item: Item): string {
       return `center (${r(item.cx)},${r(item.cy)}) radius ${r(item.r)} from ${r(item.start)}° to ${r(item.end)}°`;
     case "shape":
       return `${item.shape}${item.shape === "polygon" ? ` ${item.sides} sides` : ""} center (${r(item.x)},${r(item.y)}) ${r(item.w)}x${r(item.h)} rotation ${r(item.rotation)}°`;
-    case "text":
-      return `"${item.text}" at (${r(item.x)},${r(item.y)}) size ${r(item.size)}`;
   }
+}
+
+function geometryOf(item: Item) {
+  const { id: _id, label: _label, author: _author, pen: _pen, ...geometry } = item;
+  if (geometry.kind !== "stroke") return geometry;
+  // Bounded detail preserves endpoints and pen lifts without returning tens of
+  // thousands of smoothed points to the model for each word.
+  return { kind: "stroke", sampled: geometry.paths.some((path) => path.length > 32), paths: geometry.paths.map((path) => {
+    const count = Math.min(32, path.length);
+    return Array.from({ length: count }, (_, i) => {
+      const p = path[Math.round(i * (path.length - 1) / Math.max(1, count - 1))];
+      return { x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, p: p.p };
+    });
+  }) };
 }
 
 function raster(items: Item[]): string[] {
@@ -77,11 +96,6 @@ function raster(items: Item[]): string[] {
   };
   for (const item of items) {
     const bit = item.author === "agent" ? AGENT : HUMAN;
-    if (item.kind === "text") {
-      const b = bbox(item);
-      for (let x = b.x; x <= b.x + b.w; x += CELL / 2) mark({ x, y: item.y - item.size * 0.4 }, TEXT | bit);
-      continue;
-    }
     for (const line of polylines(item)) {
       for (let i = 0; i < line.length - 1; i++) {
         const a = line[i];
@@ -97,8 +111,7 @@ function raster(items: Item[]): string[] {
     let s = "";
     for (let c = 0; c < COLS; c++) {
       const v = grid[rr * COLS + c];
-      if (v & TEXT) s += "T";
-      else if ((v & HUMAN) && (v & AGENT)) s += "@";
+      if ((v & HUMAN) && (v & AGENT)) s += "@";
       else if (v & AGENT) s += "#";
       else if (v & HUMAN) s += "o";
       else s += ".";
@@ -111,13 +124,13 @@ function raster(items: Item[]): string[] {
 function polylines(item: Item): Pt[][] {
   switch (item.kind) {
     case "stroke":
-      return [item.points];
+      return item.paths;
     case "line":
       return [[item.from, item.to]];
     case "arc": {
       const pts: Pt[] = [];
       const span = item.end - item.start;
-      const steps = Math.max(8, Math.ceil((Math.abs(span) / 360) * 48));
+      const steps = Math.max(8, Math.min(48, Math.ceil((Math.abs(span) / 360) * 48)));
       for (let i = 0; i <= steps; i++) {
         const a = ((item.start + (span * i) / steps) * Math.PI) / 180;
         pts.push({ x: item.cx + item.r * Math.cos(a), y: item.cy + item.r * Math.sin(a) });
@@ -128,7 +141,5 @@ function polylines(item: Item): Pt[][] {
       const v = shapeVertices(item);
       return [[...v, v[0]]];
     }
-    case "text":
-      return [];
   }
 }

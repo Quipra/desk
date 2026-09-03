@@ -1,43 +1,49 @@
 import "./style.css";
-import { Instruments, type Mode } from "./instruments";
-import { Paper } from "./paper";
-import { Scene, type PaperKind, type PenKind, type Pt, type StencilShape } from "./scene";
-import { registerDesk } from "./webmcp";
+import { applyTheme, type Theme } from "./appearance.ts";
+import { Instruments, type Mode } from "./instruments.ts";
+import { Paper } from "./paper.ts";
+import { Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
+import { registerDesk } from "./webmcp.ts";
 
-const COLORS = ["#1a1a1a", "#d63b3b", "#2b6cd6", "#2a9d5c", "#e0912a"];
+const COLORS = ["auto", "#dc716b", "#729bdf", "#70ae87", "#cda361"];
+const COLOR_NAMES = ["Graphite · follows paper theme", "Terracotta", "Blue", "Sage", "Ochre"];
+let theme: Theme = "charcoal";
+try { if (localStorage.getItem("desk-theme") === "paper") theme = "paper"; } catch { /* Drawing works without storage. */ }
+applyTheme(theme);
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="top">
-    <a class="wordmark" href="/">DESK</a>
+    <div class="identity"><a class="wordmark" href="./" aria-label="Desk home">DESK</a><span class="tagline">one sheet, two hands</span></div>
     <div class="status">
-      <span id="cursor"></span>
-      <span class="chip off" id="agent"><span class="dot"></span><span id="agent-label">agent: idle</span></span>
+      <span id="cursor" aria-hidden="true"></span>
+      <button type="button" class="tool theme-toggle" id="theme" aria-pressed="false">charcoal</button>
+      <span class="chip off" id="agent" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="agent-label">agent: connecting</span></span>
     </div>
   </header>
   <main class="stage" id="stage">
-    <canvas id="paper"></canvas>
-    <div class="hint" id="hint">a shared sheet. draw on it, or ask your agent to.</div>
+    <canvas id="paper" role="img" aria-label="Shared drawing sheet"></canvas>
+    <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
+    <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
   </main>
   <footer class="tray">
     <div class="tray-inner">
-      <div class="group" id="pens">
-        <button class="tool active" data-pen="pencil">pencil</button>
-        <button class="tool" data-pen="marker">marker</button>
-        <button class="tool" data-pen="brush">brush</button>
+      <div class="group" id="pens" role="group" aria-label="Pens">
+        <button type="button" class="tool active" data-pen="pencil" aria-pressed="true">pencil</button>
+        <button type="button" class="tool" data-pen="marker" aria-pressed="false">marker</button>
+        <button type="button" class="tool" data-pen="brush" aria-pressed="false">brush</button>
       </div>
-      <div class="group" id="colors"></div>
-      <div class="group" id="modes">
-        <button class="tool" data-mode="eraser">eraser</button>
-        <button class="tool" data-mode="ruler">ruler</button>
-        <button class="tool" data-mode="compass">compass</button>
-        <button class="tool" data-mode="stencil" data-stencil="rectangle">stencil</button>
-        <button class="tool" data-mode="text">write</button>
+      <div class="group" id="colors" role="group" aria-label="Ink colors"></div>
+      <div class="group" id="modes" role="group" aria-label="Drawing tools">
+        <button type="button" class="tool" data-mode="eraser" aria-pressed="false">eraser</button>
+        <button type="button" class="tool" data-mode="ruler" aria-pressed="false">ruler</button>
+        <button type="button" class="tool" data-mode="compass" aria-pressed="false">compass</button>
+        <button type="button" class="tool" data-mode="stencil" data-stencil="rectangle" aria-pressed="false">stencil</button>
       </div>
-      <div class="group">
-        <button class="tool" id="undo">undo</button>
-        <button class="tool" id="replay">replay</button>
-        <button class="tool" id="sheet" data-paper="grid">sheet: grid</button>
+      <div class="group" role="group" aria-label="Sheet controls">
+        <button type="button" class="tool" id="undo">undo</button>
+        <button type="button" class="tool" id="replay">replay</button>
+        <button type="button" class="tool" id="sheet" data-paper="grid" aria-label="Change sheet style; current style grid">sheet: grid</button>
       </div>
     </div>
   </footer>
@@ -47,7 +53,27 @@ const scene = new Scene();
 const canvas = document.querySelector<HTMLCanvasElement>("#paper")!;
 const paper = new Paper(canvas, scene);
 const stage = document.querySelector<HTMLElement>("#stage")!;
-const instruments = new Instruments(paper, scene, openTextEntry);
+const instruments = new Instruments(paper, scene);
+paper.theme = theme;
+const motion = matchMedia("(prefers-reduced-motion: reduce)");
+paper.reducedMotion = motion.matches;
+motion.addEventListener("change", () => { paper.reducedMotion = motion.matches; });
+
+const themeButton = document.querySelector<HTMLButtonElement>("#theme")!;
+function updateTheme() {
+  applyTheme(theme);
+  paper.theme = theme;
+  paper.render();
+  themeButton.textContent = theme;
+  themeButton.setAttribute("aria-label", `Charcoal theme; switch to ${theme === "charcoal" ? "light paper" : "charcoal"}`);
+  themeButton.setAttribute("aria-pressed", String(theme === "charcoal"));
+}
+updateTheme();
+themeButton.addEventListener("click", () => {
+  theme = theme === "charcoal" ? "paper" : "charcoal";
+  updateTheme();
+  try { localStorage.setItem("desk-theme", theme); } catch { /* Theme still works for this tab. */ }
+});
 
 new ResizeObserver(() => paper.resize()).observe(stage);
 paper.resize();
@@ -58,11 +84,15 @@ const modeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-mode
 const colorsEl = document.querySelector<HTMLElement>("#colors")!;
 const STENCILS: StencilShape[] = ["rectangle", "triangle", "polygon"];
 
-for (const c of COLORS) {
+for (const [index, c] of COLORS.entries()) {
   const b = document.createElement("button");
   b.className = "swatch" + (c === COLORS[0] ? " active" : "");
-  b.style.background = c;
-  b.title = c;
+  b.style.setProperty("--swatch", c === "auto" ? "var(--ink)" : c);
+  b.title = COLOR_NAMES[index];
+  b.dataset.color = c;
+  b.type = "button";
+  b.setAttribute("aria-label", `Use ${COLOR_NAMES[index]} ink`);
+  b.setAttribute("aria-pressed", String(c === COLORS[0]));
   b.addEventListener("click", () => instruments.setColor(c));
   colorsEl.appendChild(b);
 }
@@ -81,12 +111,22 @@ for (const b of modeButtons) {
 }
 
 instruments.onChange = () => {
-  for (const b of penButtons) b.classList.toggle("active", instruments.mode === "pen" && b.dataset.pen === instruments.pen.kind);
+  for (const b of penButtons) {
+    const active = instruments.mode === "pen" && b.dataset.pen === instruments.pen.kind;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
+  }
   for (const b of modeButtons) {
-    b.classList.toggle("active", b.dataset.mode === instruments.mode);
+    const active = b.dataset.mode === instruments.mode;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
     if (b.dataset.mode === "stencil") b.textContent = instruments.mode === "stencil" ? `stencil: ${instruments.stencil}` : "stencil";
   }
-  for (const s of colorsEl.children) (s as HTMLElement).classList.toggle("active", (s as HTMLElement).title === instruments.pen.color);
+  for (const s of colorsEl.children) {
+    const active = (s as HTMLElement).dataset.color === instruments.pen.color;
+    (s as HTMLElement).classList.toggle("active", active);
+    s.setAttribute("aria-pressed", String(active));
+  }
 };
 
 document.querySelector("#undo")!.addEventListener("click", () => scene.undo("human"));
@@ -98,9 +138,14 @@ sheetBtn.addEventListener("click", () => {
   scene.setPaper(next);
 });
 const hint = document.querySelector<HTMLElement>("#hint")!;
+const paperStatus = document.querySelector<HTMLElement>("#paper-status")!;
 scene.on((e) => {
-  if (e.type === "paper" || e.type === "clear") sheetBtn.textContent = `sheet: ${scene.paper}`;
+  if (e.type === "paper" || e.type === "clear") {
+    sheetBtn.textContent = `sheet: ${scene.paper}`;
+    sheetBtn.setAttribute("aria-label", `Change sheet style; current style ${scene.paper}`);
+  }
   hint.hidden = scene.items.length > 0;
+  paperStatus.textContent = `The ${scene.paper} sheet has ${scene.items.length} ${scene.items.length === 1 ? "mark" : "marks"}.`;
 });
 
 // Pointer readout in paper units, useful when talking to the agent about positions.
@@ -111,63 +156,77 @@ canvas.addEventListener("pointermove", (e) => {
 });
 canvas.addEventListener("pointerleave", () => (cursorEl.textContent = ""));
 
-// Inline handwriting entry for the person's write tool.
-function openTextEntry(at: Pt) {
-  const input = document.createElement("input");
-  input.className = "text-entry";
-  input.placeholder = "write";
-  const rect = canvas.getBoundingClientRect();
-  const stageRect = stage.getBoundingClientRect();
-  input.style.left = `${rect.left - stageRect.left + at.x * paper.scale}px`;
-  input.style.top = `${rect.top - stageRect.top + at.y * paper.scale - 24 * paper.scale}px`;
-  input.style.fontSize = `${24 * paper.scale}px`;
-  stage.appendChild(input);
-  input.focus();
-  const commit = () => {
-    const text = input.value.trim();
-    input.remove();
-    if (text) scene.add({ kind: "text", x: at.x, y: at.y, text, size: 24 }, { label: text, author: "human", pen: instruments.pen });
-  };
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") commit();
-    if (e.key === "Escape") input.remove();
-  });
-  input.addEventListener("blur", commit);
-}
-
 // Agent status chip
 const agentChip = document.querySelector<HTMLElement>("#agent")!;
 const agentLabel = document.querySelector<HTMLElement>("#agent-label")!;
 let activeUntil = 0;
+let idleLabel = "agent: connecting";
+let activityTimer: ReturnType<typeof setTimeout> | undefined;
 function setAgentActive(active: boolean) {
   if (active) {
+    if (activityTimer !== undefined) clearTimeout(activityTimer);
     activeUntil = performance.now() + 600;
     agentChip.className = "chip on";
     agentLabel.textContent = "agent: drawing";
     return;
   }
   // Debounce so rapid tool calls read as one continuous session at the desk.
-  const at = performance.now();
-  setTimeout(() => {
-    if (performance.now() >= activeUntil && !paper.busy) {
-      agentChip.className = "chip";
-      agentLabel.textContent = "agent: ready";
+  const settle = () => {
+    const remaining = activeUntil - performance.now();
+    if (remaining > 0) {
+      activityTimer = setTimeout(settle, remaining);
+      return;
     }
-  }, Math.max(0, activeUntil - at));
+    activityTimer = undefined;
+    if (paper.busy) return;
+    agentChip.className = "chip";
+    agentLabel.textContent = idleLabel;
+  };
+  if (activityTimer !== undefined) clearTimeout(activityTimer);
+  activityTimer = setTimeout(settle, Math.max(0, activeUntil - performance.now()));
 }
 paper.onActivity = setAgentActive;
 
-registerDesk(scene, paper, { onActivity: setAgentActive }).then((desk) => {
+registerDesk(scene, paper, {
+  onActivity: setAgentActive,
+  onTool(name, source) {
+    agentChip.title = `last tool: ${name} (${source})`;
+  },
+}, { waitMs: 3000 }).then((desk) => {
   // Handy for trying instruments from the console and for automated checks.
   (window as unknown as { desk: unknown }).desk = desk;
+  window.addEventListener("pagehide", (event) => { if (!event.persisted) desk.dispose(); });
   if (desk.connected) {
     agentChip.className = "chip";
-    agentLabel.textContent = "agent: ready";
+    idleLabel = "agent: ready";
+    agentLabel.textContent = idleLabel;
+    agentChip.title = `${desk.registered.length} instruments registered with WebMCP`;
     return;
   }
-  agentLabel.textContent = "agent: not connected";
+  if (desk.registrationErrors.length > 0) {
+    agentChip.className = "chip off";
+    idleLabel = `agent: ${desk.registered.length}/${desk.names.length} tools`;
+    agentLabel.textContent = idleLabel;
+    addNotice(`${desk.registrationErrors.length} of ${desk.names.length} instruments failed to register: ${desk.registrationErrors.join("; ")}`, "alert");
+    return;
+  }
+  idleLabel = "agent: unavailable";
+  agentLabel.textContent = idleLabel;
   const n = document.createElement("div");
   n.className = "notice";
-  n.innerHTML = `This browser has no WebMCP, so an agent can't pick up the pens. Open Desk in ChatGPT's browser, or in Chrome 149+ with <code>chrome://flags/#enable-webmcp-testing</code> turned on. You can still draw.`;
+  n.innerHTML = `This browser has no WebMCP, so an agent can't pick up the pens. Open Desk in ChatGPT's browser, or in Chrome 149+ with <code>chrome://flags/#enable-webmcp-testing</code> on. You can still draw.`;
   stage.appendChild(n);
+}).catch((error: unknown) => {
+  agentChip.className = "chip off";
+  idleLabel = "agent: failed";
+  agentLabel.textContent = idleLabel;
+  addNotice(`Desk could not register its instruments: ${error instanceof Error ? error.message : String(error)}`, "alert");
 });
+
+function addNotice(message: string, role: "status" | "alert" = "status") {
+  const notice = document.createElement("div");
+  notice.className = "notice";
+  notice.setAttribute("role", role);
+  notice.textContent = message;
+  stage.appendChild(notice);
+}

@@ -2,7 +2,8 @@
 // with a glow so a person can watch the agent draw, then everything settles
 // into plain ink. Replay re-reveals every item in order.
 
-import { PAPER_H, PAPER_W, shapeVertices, type Item, type Pen, type Pt, type Scene } from "./scene";
+import { clampPt, PAPER_H, PAPER_W, shapeVertices, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
+import { inkColor, THEMES, type Theme } from "./appearance.ts";
 
 const GLOW_MS = 1400;
 const INK_SPEED = 900; // paper units per second
@@ -27,8 +28,10 @@ export class Paper {
   private current: Reveal | null = null;
   private tip: Pt | null = null;
   private raf = 0;
-  private idleResolvers: (() => void)[] = [];
-  private accent: string;
+  private idleResolvers = new Set<() => void>();
+  theme: Theme = "charcoal";
+  reducedMotion = false;
+  private get accent() { return THEMES[this.theme].agent; }
   /** A temporary item drawn on top while a person is mid-gesture. */
   preview: Item | null = null;
   onActivity: ((active: boolean) => void) | null = null;
@@ -39,7 +42,6 @@ export class Paper {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
-    this.accent = getComputedStyle(document.documentElement).getPropertyValue("--agent").trim() || "#5b5bd6";
     scene.on((e) => {
       if (e.type === "add" && e.item.author === "agent") this.enqueue(e.item);
       if (e.type === "remove") for (const id of e.ids) this.forget(id);
@@ -48,6 +50,8 @@ export class Paper {
         this.glowUntil.clear();
         this.queue = [];
         this.current = null;
+        this.tip = null;
+        this.finishIfIdle();
       }
       this.render();
     });
@@ -56,9 +60,10 @@ export class Paper {
   resize() {
     const parent = this.canvas.parentElement;
     if (!parent) return;
-    const cw = parent.clientWidth;
-    const ch = parent.clientHeight;
-    this.scale = Math.min(cw / PAPER_W, ch / PAPER_H);
+    const style = getComputedStyle(parent);
+    const cw = parent.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const ch = parent.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    this.scale = Math.max(0.01, Math.min(cw / PAPER_W, ch / PAPER_H));
     this.dpr = window.devicePixelRatio || 1;
     const w = Math.round(PAPER_W * this.scale);
     const h = Math.round(PAPER_H * this.scale);
@@ -85,14 +90,23 @@ export class Paper {
     this.progress.delete(id);
     this.glowUntil.delete(id);
     this.queue = this.queue.filter((i) => i.id !== id);
-    if (this.current?.item.id === id) this.current = null;
+    if (this.current?.item.id === id) {
+      this.current = null;
+      this.tip = null;
+    }
+    if (this.busy) this.tick();
+    else this.finishIfIdle();
   }
 
   /** Re-reveal every item in creation order, as if watching the sheet being drawn. */
   replay() {
-    if (this.scene.items.length === 0) return;
     this.queue = [];
     this.current = null;
+    this.tip = null;
+    if (this.scene.items.length === 0) {
+      this.finishIfIdle();
+      return;
+    }
     for (const item of this.scene.items) this.progress.set(item.id, 0);
     this.queue.push(...this.scene.items);
     this.tick();
@@ -103,9 +117,22 @@ export class Paper {
   }
 
   /** Resolves once all queued reveals have finished. */
-  whenIdle(): Promise<void> {
+  whenIdle(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (!this.busy) return Promise.resolve();
-    return new Promise((resolve) => this.idleResolvers.push(resolve));
+    return new Promise((resolve, reject) => {
+      const done = () => {
+        signal?.removeEventListener("abort", abort);
+        this.idleResolvers.delete(done);
+        resolve();
+      };
+      const abort = () => {
+        this.idleResolvers.delete(done);
+        reject(signal?.reason);
+      };
+      this.idleResolvers.add(done);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
 
   private tick() {
@@ -115,6 +142,16 @@ export class Paper {
 
   private frame(now: number) {
     this.raf = 0;
+    if (this.reducedMotion) {
+      this.current = null;
+      this.queue = [];
+      this.progress.clear();
+      this.glowUntil.clear();
+      this.tip = null;
+      this.finishIfIdle();
+      this.render(now);
+      return;
+    }
     if (!this.current && this.queue.length > 0) {
       const item = this.queue.shift()!;
       this.current = { item, start: now, duration: durationFor(item) };
@@ -131,16 +168,19 @@ export class Paper {
         this.current = null;
         this.tip = null;
         if (this.queue.length === 0) {
-          this.onActivity?.(false);
-          const rs = this.idleResolvers;
-          this.idleResolvers = [];
-          for (const r of rs) r();
+          this.finishIfIdle();
         }
       }
     }
     for (const [id, until] of this.glowUntil) if (until <= now) this.glowUntil.delete(id);
     this.render(now);
     if (this.busy || this.glowUntil.size > 0) this.tick();
+  }
+
+  private finishIfIdle() {
+    if (this.busy) return;
+    this.onActivity?.(false);
+    for (const resolve of this.idleResolvers) resolve();
   }
 
   render(now = performance.now()) {
@@ -160,10 +200,10 @@ export class Paper {
   }
 
   private drawPaper(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = "#fcfbf7";
+    ctx.fillStyle = THEMES[this.theme].paper;
     ctx.fillRect(0, 0, PAPER_W, PAPER_H);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "rgba(20, 24, 40, 0.07)";
+    ctx.strokeStyle = THEMES[this.theme].grid;
     ctx.beginPath();
     if (this.scene.paper === "grid") {
       for (let x = 50; x < PAPER_W; x += 50) {
@@ -204,14 +244,21 @@ export class Paper {
       ctx.fillStyle = withAlpha(this.accent, 0.28 * opts.halo);
       ctx.lineWidth = pen.width + 10;
     } else {
-      ctx.strokeStyle = pen.color;
-      ctx.fillStyle = pen.color;
+      ctx.strokeStyle = inkColor(pen.color, this.theme);
+      ctx.fillStyle = inkColor(pen.color, this.theme);
       ctx.globalAlpha = pen.opacity;
       ctx.lineWidth = pen.width;
     }
     switch (item.kind) {
       case "stroke":
-        this.drawStroke(ctx, item.points, pen, t, opts ? 10 : 0);
+        if (t >= 1) {
+          // Settled ink needs no per-frame length/progress calculations.
+          for (const points of item.paths) this.drawStroke(ctx, points, pen, 1, opts ? 10 : 0);
+        } else {
+          for (const { points, progress } of pathProgress(item.paths, t)) {
+            if (progress > 0) this.drawStroke(ctx, points, pen, progress, opts ? 10 : 0);
+          }
+        }
         break;
       case "line": {
         const to = lerp(item.from, item.to, t);
@@ -225,24 +272,13 @@ export class Paper {
       case "arc": {
         const end = item.start + (item.end - item.start) * t;
         ctx.beginPath();
-        ctx.arc(item.cx, item.cy, item.r, (item.start * Math.PI) / 180, (end * Math.PI) / 180);
+        ctx.arc(item.cx, item.cy, item.r, (item.start * Math.PI) / 180, (end * Math.PI) / 180, item.end < item.start);
         ctx.stroke();
         break;
       }
       case "shape": {
         const verts = shapeVertices(item);
         drawPartialPolygon(ctx, verts, t);
-        break;
-      }
-      case "text": {
-        const n = Math.ceil(item.text.length * t);
-        ctx.font = `${item.size}px "Geist Pixel", monospace`;
-        ctx.textBaseline = "alphabetic";
-        if (opts) {
-          ctx.lineWidth = 6;
-          ctx.strokeText(item.text.slice(0, n), item.x, item.y);
-        }
-        ctx.fillText(item.text.slice(0, n), item.x, item.y);
         break;
       }
     }
@@ -325,7 +361,7 @@ export function smooth(pts: Pt[]): Pt[] {
       const u2 = u * u;
       const u3 = u2 * u;
       const c = (a: number, b: number, cc: number, d: number) => 0.5 * (2 * b + (-a + cc) * u + (2 * a - 5 * b + 4 * cc - d) * u2 + (-a + 3 * b - 3 * cc + d) * u3);
-      out.push({ x: c(p0.x, p1.x, p2.x, p3.x), y: c(p0.y, p1.y, p2.y, p3.y), p: (p1.p ?? 0.5) + ((p2.p ?? 0.5) - (p1.p ?? 0.5)) * u });
+      out.push(clampPt({ x: c(p0.x, p1.x, p2.x, p3.x), y: c(p0.y, p1.y, p2.y, p3.y), p: (p1.p ?? 0.5) + ((p2.p ?? 0.5) - (p1.p ?? 0.5)) * u }));
     }
   }
   out.push(pts[pts.length - 1]);
@@ -381,7 +417,7 @@ function durationFor(item: Item): number {
   let len = 0;
   switch (item.kind) {
     case "stroke":
-      for (let i = 1; i < item.points.length; i++) len += dist(item.points[i - 1], item.points[i]);
+      for (const points of item.paths) len += pathLength(points);
       break;
     case "line":
       len = dist(item.from, item.to);
@@ -394,9 +430,6 @@ function durationFor(item: Item): number {
       for (let i = 0; i < v.length; i++) len += dist(v[i], v[(i + 1) % v.length]);
       break;
     }
-    case "text":
-      len = item.text.length * 40;
-      break;
   }
   return Math.max(MIN_MS, Math.min(MAX_MS, (len / INK_SPEED) * 1000));
 }
@@ -405,10 +438,9 @@ function durationFor(item: Item): number {
 function tipAt(item: Item, t: number): Pt | null {
   switch (item.kind) {
     case "stroke": {
-      const pos = (item.points.length - 1) * t;
-      const i = Math.min(item.points.length - 2, Math.floor(pos));
-      if (item.points.length < 2) return item.points[0] ?? null;
-      return lerp(item.points[i], item.points[i + 1], pos - i);
+      const visible = pathProgress(item.paths, t).filter((path) => path.progress > 0);
+      const current = visible.at(-1);
+      return current ? revealed(current.points, current.progress).at(-1) ?? null : null;
     }
     case "line":
       return lerp(item.from, item.to, t);
@@ -426,9 +458,22 @@ function tipAt(item: Item, t: number): Pt | null {
       }
       return v[0];
     }
-    case "text":
-      return { x: item.x + item.text.length * t * item.size * 0.62, y: item.y - item.size * 0.35 };
   }
+}
+
+function pathLength(points: Pt[]): number {
+  return points.reduce((length, p, index) => length + (index ? dist(points[index - 1], p) : 0), 0);
+}
+
+/** Pen lifts consume no ink: separate paths must never be joined by a line. */
+export function pathProgress(paths: Pt[][], t: number) {
+  const lengths = paths.map((points) => Math.max(1, pathLength(points)));
+  let remaining = lengths.reduce((sum, length) => sum + length, 0) * t;
+  return paths.map((points, index) => {
+    const progress = Math.max(0, Math.min(1, remaining / lengths[index]));
+    remaining -= lengths[index];
+    return { points, progress };
+  });
 }
 
 function lerp(a: Pt, b: Pt, t: number): Pt {
