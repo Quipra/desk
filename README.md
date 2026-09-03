@@ -47,7 +47,7 @@ Fourteen tools registered with `document.modelContext.registerTool` (with a `nav
 
 Five pens: pencil, fineliner, marker, brush, highlighter. Every pen can be dashed, tapered, textured (grain or chalk), and can fill closed shapes and circles with hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
 
-Designed for few round-trips. A typical figure is one `look`, one `construct` with `verify`, done. The guide rides along with the first look, pens are inline, exact points come from `measure`, and the agent can write a recipe once and stamp it with different parameters.
+Designed for few round-trips. A typical figure is one `look`, one `construct` with `verify`, done. In a scripted case study (a model given each tool set and the same task: draw segment AB, construct its perpendicular bisector with compass and ruler, label A and B, verify), the earlier eleven-tool set planned 13 calls; this set planned 1, both executing with no errors against the real tool code. The guide rides along with the first look, pens are inline, exact points come from `measure`, and the agent can write a recipe once and stamp it with different parameters.
 
 Tool schemas stay inside the JSON Schema subset chat hosts accept for tool definitions (type, properties, required, enum, items, description, additionalProperties). Ranges are validated in code. A test guards this, because a single `oneOf` or `minimum` makes a tool unusable in ChatGPT.
 
