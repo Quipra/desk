@@ -1,14 +1,27 @@
 // Paper renders the scene to a canvas. Agent marks are revealed progressively
 // with a glow so a person can watch the agent draw, then everything settles
 // into plain ink. Replay re-reveals every item in order.
+//
+// Performance model: settled ink is cached on an offscreen "dried" layer, so a
+// frame only redraws the paper, that layer, and whatever is still moving or
+// glowing. Reveal durations share a time budget per batch, so a whole
+// construct call lands in about two seconds no matter how many marks it has.
 
 import { bbox, clampPt, PAPER_H, PAPER_W, shapeVertices, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
 import { inkColor, THEMES, type Theme } from "./appearance.ts";
 
-const GLOW_MS = 1400;
-const INK_SPEED = 900; // paper units per second
-const MIN_MS = 220;
-const MAX_MS = 1800;
+const GLOW_MS = 1100;
+const INK_SPEED = 1600; // paper units per second, before the batch budget
+const MIN_MS = 60;
+const MAX_MS = 700;
+const BATCH_MS = 2400; // a queue of reveals finishes within about this long
+const IDLE_TIMEOUT_MS = 3000;
+
+// The glow is a slow-turning gradient rather than one flat color.
+const GLOW: Record<Theme, [string, string, string]> = {
+  charcoal: ["#8b8cf0", "#5fd4c8", "#f08cb9"],
+  paper: ["#5759ac", "#1f9c90", "#d6608e"],
+};
 
 interface Reveal {
   item: Item;
@@ -29,9 +42,12 @@ export class Paper {
   private tip: Pt | null = null;
   private raf = 0;
   private idleResolvers = new Set<() => void>();
-  theme: Theme = "charcoal";
+  private _theme: Theme = "charcoal";
   reducedMotion = false;
-  private get accent() { return THEMES[this.theme].agent; }
+  /** Offscreen layer holding settled ink. Null where offscreen canvases are unavailable. */
+  private dried: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
+  private driedIds = new Set<string>();
+  private driedDirty = true;
   /** A temporary item drawn on top while a person is mid-gesture. */
   preview: Item | null = null;
   onActivity: ((active: boolean) => void) | null = null;
@@ -42,21 +58,42 @@ export class Paper {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
+    this.dried = makeLayer();
     scene.on((e) => {
-      if (e.type === "add" && e.item.author === "agent") this.enqueue(e.item);
-      if (e.type === "remove") for (const id of e.ids) this.forget(id);
-      if (e.type === "change") for (const id of e.ids) this.glowUntil.set(id, performance.now() + GLOW_MS);
+      if (e.type === "add") {
+        if (e.item.author === "agent") this.enqueue(e.item);
+        else this.dry(e.item);
+      }
+      if (e.type === "remove") {
+        for (const id of e.ids) this.forget(id);
+        this.driedDirty = true;
+      }
+      if (e.type === "change") {
+        for (const id of e.ids) this.glowUntil.set(id, performance.now() + GLOW_MS);
+        this.driedDirty = true;
+      }
       if (e.type === "clear") {
         this.progress.clear();
         this.glowUntil.clear();
         this.queue = [];
         this.current = null;
         this.tip = null;
+        this.driedDirty = true;
         this.finishIfIdle();
       }
       this.render();
       if (e.type === "change") this.tick();
     });
+  }
+
+  get theme(): Theme {
+    return this._theme;
+  }
+
+  set theme(t: Theme) {
+    if (t === this._theme) return;
+    this._theme = t;
+    this.driedDirty = true;
   }
 
   resize() {
@@ -73,6 +110,11 @@ export class Paper {
     this.canvas.style.height = `${h}px`;
     this.canvas.width = Math.round(w * this.dpr);
     this.canvas.height = Math.round(h * this.dpr);
+    if (this.dried) {
+      this.dried.canvas.width = this.canvas.width;
+      this.dried.canvas.height = this.canvas.height;
+    }
+    this.driedDirty = true;
     this.render();
   }
 
@@ -105,6 +147,7 @@ export class Paper {
     this.queue = [];
     this.current = null;
     this.tip = null;
+    this.driedDirty = true;
     if (this.scene.items.length === 0) {
       this.finishIfIdle();
       return;
@@ -118,17 +161,23 @@ export class Paper {
     return this.current !== null || this.queue.length > 0;
   }
 
-  /** Resolves once all queued reveals have finished. */
-  whenIdle(signal?: AbortSignal): Promise<void> {
+  /**
+   * Resolves once queued reveals have finished, or after a timeout. The scene is
+   * already final when a mark is added; waiting is only ever cosmetic.
+   */
+  whenIdle(signal?: AbortSignal, timeoutMs = IDLE_TIMEOUT_MS): Promise<void> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     if (!this.busy) return Promise.resolve();
     return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => done(), timeoutMs);
       const done = () => {
+        clearTimeout(timer);
         signal?.removeEventListener("abort", abort);
         this.idleResolvers.delete(done);
         resolve();
       };
       const abort = () => {
+        clearTimeout(timer);
         this.idleResolvers.delete(done);
         reject(signal?.reason);
       };
@@ -150,13 +199,14 @@ export class Paper {
       this.progress.clear();
       this.glowUntil.clear();
       this.tip = null;
+      this.driedDirty = true;
       this.finishIfIdle();
       this.render(now);
       return;
     }
     if (!this.current && this.queue.length > 0) {
       const item = this.queue.shift()!;
-      this.current = { item, start: now, duration: durationFor(item) };
+      this.current = { item, start: now, duration: this.durationFor(item) };
       this.onActivity?.(true);
     }
     if (this.current) {
@@ -169,14 +219,25 @@ export class Paper {
         this.glowUntil.set(item.id, now + GLOW_MS);
         this.current = null;
         this.tip = null;
-        if (this.queue.length === 0) {
-          this.finishIfIdle();
-        }
+        if (this.queue.length === 0) this.finishIfIdle();
       }
     }
-    for (const [id, until] of this.glowUntil) if (until <= now) this.glowUntil.delete(id);
+    for (const [id, until] of this.glowUntil) {
+      if (until > now) continue;
+      this.glowUntil.delete(id);
+      const item = this.scene.get(id);
+      if (item) this.dry(item);
+    }
     this.render(now);
     if (this.busy || this.glowUntil.size > 0) this.tick();
+  }
+
+  /** Natural reveal time, squeezed so the whole queue fits the batch budget. */
+  private durationFor(item: Item): number {
+    const natural = (i: Item) => Math.max(MIN_MS, Math.min(MAX_MS, (inkLength(i) / INK_SPEED) * 1000));
+    const total = natural(item) + this.queue.reduce((s, i) => s + natural(i), 0);
+    const factor = Math.min(1, BATCH_MS / total);
+    return Math.max(40, natural(item) * factor);
   }
 
   private finishIfIdle() {
@@ -185,27 +246,64 @@ export class Paper {
     for (const resolve of this.idleResolvers) resolve();
   }
 
+  /** Paint one settled item onto the dried layer. */
+  private dry(item: Item) {
+    if (!this.dried || this.driedDirty || this.driedIds.has(item.id)) return;
+    const ctx = this.dried.ctx;
+    ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
+    this.drawItem(ctx, item, 1);
+    this.driedIds.add(item.id);
+  }
+
+  /** Rebuild the dried layer from every settled item. */
+  private rebuildDried() {
+    if (!this.dried) return;
+    const ctx = this.dried.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.dried.canvas.width, this.dried.canvas.height);
+    ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
+    this.driedIds.clear();
+    for (const item of this.scene.items) {
+      if (this.isLive(item.id)) continue;
+      this.drawItem(ctx, item, 1);
+      this.driedIds.add(item.id);
+    }
+    this.driedDirty = false;
+  }
+
+  private isLive(id: string): boolean {
+    return this.progress.has(id) || this.glowUntil.has(id);
+  }
+
   render(now = performance.now()) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
     this.drawPaper(ctx);
+    if (this.dried) {
+      if (this.driedDirty) this.rebuildDried();
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(this.dried.canvas, 0, 0);
+      ctx.restore();
+    }
     for (const item of this.scene.items) {
+      if (this.dried && this.driedIds.has(item.id)) continue;
       const t = this.progress.get(item.id) ?? 1;
       if (t <= 0) continue;
       const glowEnd = this.glowUntil.get(item.id);
       const glow = t < 1 ? 1 : glowEnd ? Math.max(0, (glowEnd - now) / GLOW_MS) : 0;
-      if (glow > 0) this.drawItem(ctx, item, t, { halo: glow });
+      if (glow > 0) this.drawItem(ctx, item, t, { halo: glow, now });
       this.drawItem(ctx, item, t);
     }
     if (this.preview) this.drawItem(ctx, this.preview, 1);
-    if (this.tip) this.drawTip(ctx, this.tip);
+    if (this.tip) this.drawTip(ctx, this.tip, now);
   }
 
   private drawPaper(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = THEMES[this.theme].paper;
+    ctx.fillStyle = THEMES[this._theme].paper;
     ctx.fillRect(0, 0, PAPER_W, PAPER_H);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = THEMES[this.theme].grid;
+    ctx.strokeStyle = THEMES[this._theme].grid;
     ctx.beginPath();
     if (this.scene.paper === "grid") {
       for (let x = 50; x < PAPER_W; x += 50) {
@@ -225,29 +323,57 @@ export class Paper {
     ctx.stroke();
   }
 
-  private drawTip(ctx: CanvasRenderingContext2D, p: Pt) {
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 14);
-    g.addColorStop(0, withAlpha(this.accent, 0.9));
-    g.addColorStop(0.4, withAlpha(this.accent, 0.35));
-    g.addColorStop(1, withAlpha(this.accent, 0));
-    ctx.fillStyle = g;
+  /** The pen tip: a bright core inside a soft, slowly shifting bloom. */
+  private drawTip(ctx: CanvasRenderingContext2D, p: Pt, now: number) {
+    const [a, b, c] = GLOW[this._theme];
+    const phase = (now / 1800) % 1;
+    const bloom = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 26);
+    bloom.addColorStop(0, withAlpha(a, 0.55));
+    bloom.addColorStop(0.35 + 0.15 * Math.sin(phase * Math.PI * 2), withAlpha(b, 0.28));
+    bloom.addColorStop(0.75, withAlpha(c, 0.12));
+    bloom.addColorStop(1, withAlpha(c, 0));
+    ctx.fillStyle = bloom;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
+    ctx.fill();
+    const core = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 6);
+    core.addColorStop(0, "rgba(255,255,255,0.95)");
+    core.addColorStop(1, withAlpha(a, 0));
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  private drawItem(ctx: CanvasRenderingContext2D, item: Item, t: number, opts?: { halo: number }) {
+  /** A gradient that slowly turns across the mark's bounds, for halos. */
+  private haloStyle(ctx: CanvasRenderingContext2D, item: Item, alpha: number, now: number): CanvasGradient | string {
+    const [a, b, c] = GLOW[this._theme];
+    if (typeof ctx.createLinearGradient !== "function") return withAlpha(a, alpha);
+    const r = bbox(item);
+    const ang = (now / 2600) * Math.PI * 2;
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const reach = Math.max(40, Math.hypot(r.w, r.h) / 2);
+    const g = ctx.createLinearGradient(cx - Math.cos(ang) * reach, cy - Math.sin(ang) * reach, cx + Math.cos(ang) * reach, cy + Math.sin(ang) * reach);
+    g.addColorStop(0, withAlpha(a, alpha));
+    g.addColorStop(0.5, withAlpha(b, alpha));
+    g.addColorStop(1, withAlpha(c, alpha));
+    return g;
+  }
+
+  private drawItem(ctx: CanvasRenderingContext2D, item: Item, t: number, opts?: { halo: number; now: number }) {
     const pen = item.pen;
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     if (opts) {
-      ctx.strokeStyle = withAlpha(this.accent, 0.28 * opts.halo);
-      ctx.fillStyle = withAlpha(this.accent, 0.28 * opts.halo);
+      const style = this.haloStyle(ctx, item, 0.34 * opts.halo, opts.now);
+      ctx.strokeStyle = style;
+      ctx.fillStyle = style;
       ctx.lineWidth = pen.width + 10;
     } else {
-      ctx.strokeStyle = inkColor(pen.color, this.theme);
-      ctx.fillStyle = inkColor(pen.color, this.theme);
+      ctx.strokeStyle = inkColor(pen.color, this._theme);
+      ctx.fillStyle = inkColor(pen.color, this._theme);
       ctx.globalAlpha = pen.opacity;
       ctx.lineWidth = pen.width;
       if (pen.dash) ctx.setLineDash([Math.max(6, pen.width * 3), Math.max(5, pen.width * 2.5)]);
@@ -265,7 +391,6 @@ export class Paper {
             ctx.stroke();
           }
         } else if (t >= 1) {
-          // Settled ink needs no per-frame length/progress calculations.
           for (const points of item.paths) this.drawStroke(ctx, points, pen, 1, opts ? 10 : 0);
         } else {
           for (const { points, progress } of pathProgress(item.paths, t)) {
@@ -302,8 +427,7 @@ export class Paper {
           ctx.moveTo(verts[0].x, verts[0].y);
           for (const v of verts.slice(1)) ctx.lineTo(v.x, v.y);
           ctx.closePath();
-          const b = bbox(item);
-          this.drawFill(ctx, item, pen, b);
+          this.drawFill(ctx, item, pen, bbox(item));
         }
         break;
       }
@@ -319,7 +443,7 @@ export class Paper {
     ctx.lineWidth = Math.max(0.8, pen.width * 0.45);
     const seed = item.id.split("").reduce((s, c) => s + c.charCodeAt(0), 0);
     if (pen.fill === "stipple") {
-      const count = Math.min(4000, Math.round((b.w * b.h) / Math.max(12, pen.width * 6)));
+      const count = Math.min(2500, Math.round((b.w * b.h) / Math.max(12, pen.width * 6)));
       for (let i = 0; i < count; i++) {
         const x = b.x + noise(i * 2, seed) * b.w;
         const y = b.y + noise(i * 2 + 1, seed) * b.h;
@@ -355,7 +479,7 @@ export class Paper {
     if (pen.texture === "chalk" && !extra) {
       // Chalk: three soft offset passes read as a dry, dusty edge.
       const alpha = ctx.globalAlpha;
-      ctx.globalAlpha = alpha * 0.45;
+      ctx.globalAlpha = alpha * 0.4;
       for (const [ox, oy] of [[-1.2, 0.8], [1.1, -0.9], [0, 0]] as const) {
         this.drawRibbon(ctx, all.map((p) => ({ ...p, x: p.x + ox, y: p.y + oy })), pen, t, extra);
       }
@@ -370,43 +494,66 @@ export class Paper {
     if (pts.length === 0) return;
     const n = pts.length;
     const taperLen = pen.taper ? Math.max(2, Math.min(14, Math.floor(n / 3))) : 0;
+    const grain = pen.texture === "grain" && !extra;
     const half = (i: number) => {
       let w = widthFor(pen, pts[i].p) / 2 + extra / 2;
       if (taperLen) w *= Math.min(1, (i + 1) / taperLen, (n - i) / taperLen);
-      if (pen.texture === "grain" && !extra) w *= 0.8 + 0.4 * noise(i, Math.round(pts[0].x + pts[0].y));
+      if (grain) w *= 0.8 + 0.4 * noise(i, Math.round(pts[0].x + pts[0].y));
       return Math.max(0.3, w);
     };
-    ctx.beginPath();
     if (pts.length === 1) {
+      ctx.beginPath();
       ctx.arc(pts[0].x, pts[0].y, half(0), 0, Math.PI * 2);
       ctx.fill();
       return;
     }
     const left: Pt[] = [];
     const right: Pt[] = [];
-    for (let i = 0; i < pts.length; i++) {
+    for (let i = 0; i < n; i++) {
       const a = pts[Math.max(0, i - 1)];
-      const b = pts[Math.min(pts.length - 1, i + 1)];
+      const b = pts[Math.min(n - 1, i + 1)];
       const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
       const nx = -(b.y - a.y) / len;
       const ny = (b.x - a.x) / len;
       const w = half(i);
-      const g = pen.texture === "grain" && !extra ? (noise(i * 7, 3) - 0.5) * w : 0;
+      const g = grain ? (noise(i * 7, 3) - 0.5) * w : 0;
       left.push({ x: pts[i].x + nx * (w + g), y: pts[i].y + ny * (w + g) });
       right.push({ x: pts[i].x - nx * (w - g), y: pts[i].y - ny * (w - g) });
     }
+    ctx.beginPath();
     ctx.moveTo(left[0].x, left[0].y);
-    for (let i = 1; i < left.length; i++) ctx.lineTo(left[i].x, left[i].y);
-    for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i].x, right[i].y);
+    for (let i = 1; i < n; i++) ctx.lineTo(left[i].x, left[i].y);
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i].x, right[i].y);
     ctx.closePath();
     ctx.fill();
-    // Round caps.
-    ctx.beginPath();
-    ctx.arc(pts[0].x, pts[0].y, half(0), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(pts[pts.length - 1].x, pts[pts.length - 1].y, half(pts.length - 1), 0, Math.PI * 2);
-    ctx.fill();
+    // Round joints at every point hide the spikes a ribbon grows at sharp turns,
+    // and give the ends their caps. Grain keeps its broken edge on purpose.
+    if (!grain) {
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const r = half(i);
+        ctx.moveTo(pts[i].x + r, pts[i].y);
+        ctx.arc(pts[i].x, pts[i].y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(pts[0].x, pts[0].y, half(0), 0, Math.PI * 2);
+      ctx.arc(pts[n - 1].x, pts[n - 1].y, half(n - 1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+/** An offscreen canvas for dried ink, when the environment can make one. */
+function makeLayer(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (typeof document === "undefined" || typeof document.createElement !== "function") return null;
+  try {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    return ctx ? { canvas, ctx } : null;
+  } catch {
+    return null;
   }
 }
 
@@ -503,25 +650,21 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, from: Pt, to: Pt, size: nu
   ctx.stroke();
 }
 
-function durationFor(item: Item): number {
-  let len = 0;
+function inkLength(item: Item): number {
   switch (item.kind) {
     case "stroke":
-      for (const points of item.paths) len += pathLength(points);
-      break;
+      return item.paths.reduce((s, points) => s + pathLength(points), 0);
     case "line":
-      len = dist(item.from, item.to);
-      break;
+      return dist(item.from, item.to);
     case "arc":
-      len = (Math.abs(item.end - item.start) / 360) * 2 * Math.PI * item.r;
-      break;
+      return (Math.abs(item.end - item.start) / 360) * 2 * Math.PI * item.r;
     case "shape": {
       const v = shapeVertices(item);
+      let len = 0;
       for (let i = 0; i < v.length; i++) len += dist(v[i], v[(i + 1) % v.length]);
-      break;
+      return len;
     }
   }
-  return Math.max(MIN_MS, Math.min(MAX_MS, (len / INK_SPEED) * 1000));
 }
 
 /** Where the pen tip is while an item is being revealed. */

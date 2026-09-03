@@ -340,7 +340,9 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     const offset = i.offset === undefined ? 0 : integer(i.offset, "offset", 0, Number.MAX_SAFE_INTEGER);
     const limit = i.limit === undefined ? (i.detail ? 10 : 60) : integer(i.limit, "limit", 1, 100);
     const reg = i.region === undefined ? undefined : readRegion(i.region);
-    if (i.wait !== false) await paper.whenIdle(signal);
+    // The scene is final the moment a mark is added; the reveal is cosmetic.
+    // Waiting is opt-in and capped so a tool result never stalls on animation.
+    if (i.wait === true) await paper.whenIdle(signal, 3000);
     const theme = paper.theme ?? "charcoal";
     const view = describe(scene, { region: reg, detail: i.detail === true, offset, limit });
     const changes = seen === null ? null : diffSince(seen, scene.items);
@@ -382,7 +384,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
         properties: {
           region: { ...region, description: "only marks touching this rectangle" },
           detail: { type: "boolean", description: "include sampled point geometry" },
-          wait: { type: "boolean", description: "default true: wait for ink in motion to settle first" },
+          wait: { type: "boolean", description: "true to wait (up to 3s) for ink in motion to settle first; the mark list is exact either way" },
           offset: { type: "number" },
           limit: { type: "number" },
         },

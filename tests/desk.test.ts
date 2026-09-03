@@ -311,7 +311,7 @@ test("cancelled look rejects without cancelling other waiters or deleting marks"
   const desk = await registerDesk(scene, paper, { onActivity() {} });
   await desk.call("draw", { points: [{ x: 100, y: 100 }, { x: 500, y: 100 }], label: "line" });
   const controller = new AbortController();
-  const rejected = assert.rejects(desk.call("look", {}, { signal: controller.signal }), { name: "AbortError" });
+  const rejected = assert.rejects(desk.call("look", { wait: true }, { signal: controller.signal }), { name: "AbortError" });
   const other = paper.whenIdle();
   controller.abort();
   await rejected;
@@ -525,7 +525,12 @@ function paperHarness() {
     closePath: noop,
     strokeText: noop,
     fillText: noop,
+    clip: noop,
+    setLineDash: noop,
+    drawImage: noop,
+    clearRect: noop,
     createRadialGradient: () => ({ addColorStop: noop }),
+    createLinearGradient: () => ({ addColorStop: noop }),
   } as unknown as CanvasRenderingContext2D;
   const canvas = {
     getContext: () => context,
