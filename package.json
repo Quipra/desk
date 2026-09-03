@@ -14,6 +14,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
+    "@phosphor-icons/core": "2.1.1",
     "geist": "1.7.2"
   }
 }

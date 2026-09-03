@@ -49,6 +49,9 @@ export class Paper {
   private dried: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
   private driedIds = new Set<string>();
   private driedDirty = true;
+  /** The view the dried layer was painted for; while the view moves it is reused, scaled. */
+  private driedView = { k: 1, x: 0, y: 0 };
+  private viewTimer: ReturnType<typeof setTimeout> | undefined;
   private boilSeed = 0;
   /** A temporary item drawn on top while a person is mid-gesture. */
   preview: Item | null = null;
@@ -195,9 +198,20 @@ export class Paper {
 
   setView(view: { k: number; x: number; y: number }) {
     this.view = view;
-    this.driedDirty = true;
     this.onView?.(view);
-    this.render();
+    // Reuse the dried layer, scaled, while the view is moving; repaint it crisp once it settles.
+    if (this.viewTimer !== undefined) clearTimeout(this.viewTimer);
+    this.viewTimer = setTimeout(() => {
+      this.viewTimer = undefined;
+      this.driedDirty = true;
+      this.invalidate();
+    }, 140);
+    this.invalidate();
+  }
+
+  /** Ask for a redraw on the next frame; many calls in one frame cost one render. */
+  invalidate() {
+    this.tick();
   }
 
   /** Render the sheet alone at a given pixel scale, for PNG export. */
@@ -372,6 +386,7 @@ export class Paper {
     ctx.clearRect(0, 0, this.dried.canvas.width, this.dried.canvas.height);
     this.applyView(ctx);
     this.driedIds.clear();
+    this.driedView = { ...this.view };
     for (const item of this.scene.items) {
       if (item.hidden) {
         this.driedIds.add(item.id);
@@ -397,11 +412,14 @@ export class Paper {
     this.applyView(ctx);
     this.drawPaper(ctx);
     if (this.dried) {
-      if (this.driedDirty) this.rebuildDried();
+      if (this.driedDirty && this.viewTimer === undefined) this.rebuildDried();
+      const dv = this.driedView;
+      const r = this.view.k / dv.k;
       ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.setTransform(r, 0, 0, r, this.dpr * (this.view.x - dv.x * r), this.dpr * (this.view.y - dv.y * r));
       ctx.drawImage(this.dried.canvas, 0, 0);
       ctx.restore();
+      this.applyView(ctx);
     }
     const { onion, fps } = this.scene.timeline;
     const showOnion = onion && !this.playing && this.scene.animated && this.time > 0;
@@ -438,33 +456,52 @@ export class Paper {
     ctx.restore();
   }
 
+  /**
+   * The sheet, plus a desk grid that keeps the same density at any zoom, the
+   * way an infinite canvas does: the spacing steps by 2 as you zoom so the
+   * pattern reads the same going in and out.
+   */
   private drawPaper(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = THEMES[this._theme].paper;
+    const t = THEMES[this._theme];
+    const k = this.scale * this.view.k;
+    // Visible viewport in paper units.
+    const vx = -this.view.x / k;
+    const vy = -this.view.y / k;
+    const vw = this.canvas.width / this.dpr / k;
+    const vh = this.canvas.height / this.dpr / k;
+    ctx.fillStyle = t.paper;
     ctx.fillRect(0, 0, PAPER_W, PAPER_H);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, PAPER_W, PAPER_H);
-    ctx.clip();
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = THEMES[this._theme].grid;
-    ctx.beginPath();
-    if (this.scene.paper === "grid") {
-      for (let x = 50; x < PAPER_W; x += 50) {
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, PAPER_H);
+    if (this.scene.paper !== "blank") {
+      // 50 paper units at 100%; halve or double so cells stay 25..100px on screen.
+      let step = 50;
+      while (step * k > 100) step /= 2;
+      while (step * k < 25) step *= 2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, PAPER_W, PAPER_H);
+      ctx.clip();
+      ctx.lineWidth = 1 / k;
+      ctx.strokeStyle = t.grid;
+      ctx.beginPath();
+      const x0 = Math.max(0, Math.floor(vx / step) * step);
+      const x1 = Math.min(PAPER_W, vx + vw);
+      const y0 = Math.max(0, Math.floor(vy / step) * step);
+      const y1 = Math.min(PAPER_H, vy + vh);
+      if (this.scene.paper === "grid") for (let x = x0; x <= x1; x += step) {
+        ctx.moveTo(x, Math.max(0, vy));
+        ctx.lineTo(x, Math.min(PAPER_H, vy + vh));
       }
-      for (let y = 50; y < PAPER_H; y += 50) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(PAPER_W, y);
+      for (let y = y0; y <= y1; y += step) {
+        ctx.moveTo(Math.max(0, vx), y);
+        ctx.lineTo(Math.min(PAPER_W, vx + vw), y);
       }
-    } else if (this.scene.paper === "lined") {
-      for (let y = 60; y < PAPER_H; y += 40) {
-        ctx.moveTo(0, y);
-        ctx.lineTo(PAPER_W, y);
-      }
+      ctx.stroke();
+      ctx.restore();
     }
-    ctx.stroke();
-    ctx.restore();
+    // A hairline edge so the sheet reads as paper on the desk when zoomed out.
+    ctx.lineWidth = 1 / k;
+    ctx.strokeStyle = t.line;
+    ctx.strokeRect(0, 0, PAPER_W, PAPER_H);
   }
 
   /** The pen tip: a bright core inside a soft, slowly shifting bloom. */

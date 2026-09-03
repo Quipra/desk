@@ -61,7 +61,7 @@ app.innerHTML = `
     <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
     <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
     <aside class="layers" id="layers" hidden aria-label="Layers"></aside>
-  </main>
+    <div class="picker" id="picker" hidden></div>
   <section class="strip" id="strip" hidden aria-label="Timeline">
     ${tool("play", "play", "Play or pause")}
     <span class="clock" id="clock">0.00 / 4.00</span>
@@ -72,8 +72,8 @@ app.innerHTML = `
     ${tool("loop", "loop", "Loop", 'aria-pressed="true"')}
     ${tool("onion", "onion", "Onion skin", 'aria-pressed="false"')}
   </section>
+  </main>
   <footer class="tray">
-    <div class="picker" id="picker" hidden></div>
     <div class="tray-inner">
       <div class="group" role="group" aria-label="Navigate">
         ${tool("mode-hand", "hand", "Hand: pan the sheet (hold space)", 'data-mode="hand"')}
@@ -145,12 +145,12 @@ function renderPicker() {
     parts.push(`<div class="pgroup">${PAPERS.map((p) => `<button type="button" class="tool${scene.paper === p ? " active" : ""}" data-paper="${p}" title="${p} paper">${icon(p)}</button>`).join("")}</div>`);
   } else if (mode === "pen") {
     parts.push(`<div class="pgroup">${PENS.map((k) => `<button type="button" class="tool${instruments.pen.kind === k ? " active" : ""}" data-pen="${k}" title="${k}">${icon(k)}</button>`).join("")}</div>`);
-    parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="dashed">${icon("dash")}</button></div>`);
+    parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="${instruments.pen.dash ? "dashed" : "solid"}">${icon(instruments.pen.dash ? "dash" : "solid")}</button></div>`);
     parts.push(`<div class="pgroup colors">${COLORS.map(([c, name]) => `<button type="button" class="swatch${instruments.pen.color === c ? " active" : ""}" data-color="${c}" title="${name}" style="--swatch:${c === "auto" ? "var(--ink)" : c}"></button>`).join("")}<label class="swatch custom${COLORS.some(([c]) => c === instruments.pen.color) ? "" : " active"}" title="custom color" style="--swatch:${COLORS.some(([c]) => c === instruments.pen.color) ? "transparent" : instruments.pen.color}"><input type="color" id="custom-color" aria-label="Custom color" value="${/^#[0-9a-f]{6}$/i.test(instruments.pen.color) ? instruments.pen.color : "#dc716b"}"></label></div>`);
   } else if (mode === "stencil") {
     parts.push(`<div class="pgroup">${STENCILS.map((s) => `<button type="button" class="tool${instruments.stencil === s ? " active" : ""}" data-stencil="${s}" title="${s}">${icon(s)}</button>`).join("")}</div>`);
   } else if (mode === "ruler" || mode === "compass") {
-    parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="dashed">${icon("dash")}</button></div>`);
+    parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="${instruments.pen.dash ? "dashed" : "solid"}">${icon(instruments.pen.dash ? "dash" : "solid")}</button></div>`);
     parts.push(`<div class="pgroup colors">${COLORS.map(([c, name]) => `<button type="button" class="swatch${instruments.pen.color === c ? " active" : ""}" data-color="${c}" title="${name}" style="--swatch:${c === "auto" ? "var(--ink)" : c}"></button>`).join("")}</div>`);
   }
   picker.hidden = parts.length === 0;
@@ -391,7 +391,7 @@ function renderMenu() {
     <div class="menu-row">
       <button type="button" class="mitem" data-act="png">${icon("export")}<span>PNG</span></button>
       <button type="button" class="mitem" data-act="svg">${icon("export")}<span>SVG</span></button>
-      <button type="button" class="mitem" data-act="video" ${scene.animated ? "" : "disabled"}>${icon("export")}<span>Video</span></button>
+      <button type="button" class="mitem" data-act="video" ${scene.animated ? "" : "disabled"}>${icon("video")}<span>Video</span></button>
     </div>
     <div class="menu-title">${icon("library")}<span>library</span><em>${sheets.length ? `${sheets.length} saved` : "nothing saved yet"}</em></div>
     <div class="library">

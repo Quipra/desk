@@ -79,7 +79,7 @@ export class Instruments {
     this.points = [p];
     if (this.mode === "eraser") this.eraseAt(p);
     this.paper.preview = this.previewItem(p);
-    this.paper.render();
+    this.paper.invalidate();
   }
 
   private move(e: PointerEvent) {
@@ -98,7 +98,7 @@ export class Instruments {
       }
     }
     this.paper.preview = this.previewItem(p);
-    this.paper.render();
+    this.paper.invalidate();
   }
 
   private end(e: PointerEvent) {
@@ -118,7 +118,7 @@ export class Instruments {
       const { id: _id, ...rest } = item;
       this.scene.add(rest, { label: rest.label, author: "human", pen: rest.pen });
     } else {
-      this.paper.render();
+      this.paper.invalidate();
     }
   }
 
@@ -126,7 +126,7 @@ export class Instruments {
     this.down = null;
     this.releasePointer();
     this.paper.preview = null;
-    this.paper.render();
+    this.paper.invalidate();
   }
 
   private releasePointer() {

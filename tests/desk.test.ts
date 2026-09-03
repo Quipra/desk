@@ -511,7 +511,7 @@ test("pointer ownership, coalesced samples, and the final pen-up coordinate are 
     hasPointerCapture(id: number) { return captures.has(id); },
     releasePointerCapture(id: number) { captures.delete(id); },
   };
-  const paper = { canvas, preview: null, render() {}, toPaper(e: PointerEvent) { return { x: e.clientX, y: e.clientY }; } } as unknown as Paper;
+  const paper = { canvas, preview: null, render() {}, invalidate() {}, toPaper(e: PointerEvent) { return { x: e.clientX, y: e.clientY }; } } as unknown as Paper;
   const instruments = new Instruments(paper, scene);
   const event = (x: number, id = 1) => ({ clientX: x, clientY: 100, pointerId: id, pointerType: "mouse", button: 0, isPrimary: true, pressure: 0.5, preventDefault() {} }) as PointerEvent;
   const emit = (type: string, e: PointerEvent) => listeners.get(type)!(e);
@@ -648,6 +648,7 @@ function paperHarness() {
     fillText: noop,
     clip: noop,
     rect: noop,
+    strokeRect: noop,
     setLineDash: noop,
     drawImage: noop,
     clearRect: noop,
