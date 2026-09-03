@@ -42,7 +42,6 @@ app.innerHTML = `
   <header class="top">
     <div class="identity">
       <button type="button" class="wordmark" id="menu-button" aria-haspopup="menu" aria-expanded="false">DESK</button>
-      <span class="tagline">one sheet, two hands</span>
     </div>
     <div class="status">
       <span id="cursor" aria-hidden="true"></span>
@@ -51,7 +50,7 @@ app.innerHTML = `
         <button type="button" class="tool readout" id="zoom-readout" title="Fit to screen">100%</button>
         ${tool("zoom-in", "plus", "Zoom in")}
       </div>
-      <button type="button" class="tool text" id="theme" aria-pressed="false">charcoal</button>
+      ${tool("layers-toggle", "front", "Layers", 'aria-pressed="false"')}
       <span class="chip off" id="agent" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="agent-label">agent: connecting</span></span>
     </div>
   </header>
@@ -109,17 +108,13 @@ motion.addEventListener("change", () => {
 });
 
 // Theme
-const themeButton = document.querySelector<HTMLButtonElement>("#theme")!;
 function updateTheme() {
   applyTheme(theme);
   paper.theme = theme;
-  paper.render();
-  themeButton.textContent = theme;
-  themeButton.setAttribute("aria-label", `Theme ${theme}; switch to ${theme === "charcoal" ? "paper" : "charcoal"}`);
-  themeButton.setAttribute("aria-pressed", String(theme === "charcoal"));
+  paper.invalidate();
 }
 updateTheme();
-themeButton.addEventListener("click", () => {
+function toggleTheme() {
   theme = theme === "charcoal" ? "paper" : "charcoal";
   updateTheme();
   try {
@@ -127,7 +122,7 @@ themeButton.addEventListener("click", () => {
   } catch {
     /* Theme still works for this tab. */
   }
-});
+}
 
 new ResizeObserver(() => paper.resize()).observe(stage);
 paper.resize();
@@ -137,6 +132,8 @@ const modeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-mode
 const picker = document.querySelector<HTMLElement>("#picker")!;
 const sheetBtn = document.querySelector<HTMLButtonElement>("#sheet")!;
 let sheetPicker = false;
+// The picker is a popover: it opens when a tool is clicked and gets out of the way when you draw.
+let pickerOpen = false;
 
 function renderPicker() {
   const mode = instruments.mode;
@@ -153,7 +150,7 @@ function renderPicker() {
     parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="${instruments.pen.dash ? "dashed" : "solid"}">${icon(instruments.pen.dash ? "dash" : "solid")}</button></div>`);
     parts.push(`<div class="pgroup colors">${COLORS.map(([c, name]) => `<button type="button" class="swatch${instruments.pen.color === c ? " active" : ""}" data-color="${c}" title="${name}" style="--swatch:${c === "auto" ? "var(--ink)" : c}"></button>`).join("")}</div>`);
   }
-  picker.hidden = parts.length === 0;
+  picker.hidden = parts.length === 0 || !pickerOpen;
   picker.innerHTML = parts.join('<span class="sep"></span>');
   for (const b of modeButtons) {
     const active = b.dataset.mode === mode && !sheetPicker;
@@ -186,13 +183,23 @@ picker.addEventListener("input", (e) => {
 });
 for (const b of modeButtons) {
   b.addEventListener("click", () => {
+    const mode = b.dataset.mode as Mode;
+    const again = instruments.mode === mode && !sheetPicker;
     sheetPicker = false;
-    instruments.setMode(b.dataset.mode as Mode);
-    canvas.style.cursor = b.dataset.mode === "hand" ? "grab" : "crosshair";
+    pickerOpen = again ? !pickerOpen : true;
+    instruments.setMode(mode);
+    canvas.style.cursor = mode === "hand" ? "grab" : "crosshair";
   });
 }
 sheetBtn.addEventListener("click", () => {
   sheetPicker = !sheetPicker;
+  pickerOpen = sheetPicker;
+  renderPicker();
+});
+canvas.addEventListener("pointerdown", () => {
+  if (!pickerOpen) return;
+  pickerOpen = false;
+  sheetPicker = false;
   renderPicker();
 });
 instruments.onChange = renderPicker;
@@ -254,6 +261,12 @@ canvas.addEventListener("pointercancel", endPan, { capture: true });
 window.addEventListener("keydown", (e) => {
   const typing = (e.target as HTMLElement)?.tagName === "INPUT";
   if (typing) return;
+  if (e.key === "Escape") {
+    pickerOpen = false;
+    sheetPicker = false;
+    renderPicker();
+    openMenu(false);
+  }
   if (e.code === "Space" && !e.repeat) {
     space = true;
     canvas.style.cursor = "grab";
@@ -320,8 +333,24 @@ scrub.addEventListener("input", () => {
 loopBtn.addEventListener("click", () => scene.setTimeline({ loop: !scene.timeline.loop }));
 onionBtn.addEventListener("click", () => scene.setTimeline({ onion: !scene.timeline.onion }));
 
-// Layers panel: groups as layers, with visibility and z-order.
+// Layers panel: opt-in, groups as layers, with visibility and z-order.
 const layersEl = document.querySelector<HTMLElement>("#layers")!;
+const layersToggle = document.querySelector<HTMLButtonElement>("#layers-toggle")!;
+let layersOpen = false;
+try {
+  layersOpen = localStorage.getItem("desk-layers") === "open";
+} catch {
+  /* fine */
+}
+layersToggle.addEventListener("click", () => {
+  layersOpen = !layersOpen;
+  try {
+    localStorage.setItem("desk-layers", layersOpen ? "open" : "closed");
+  } catch {
+    /* fine */
+  }
+  syncLayers();
+});
 function syncLayers() {
   const groups = new Map<string, { ids: string[]; hidden: boolean; moving: boolean }>();
   for (const item of scene.items) {
@@ -332,7 +361,10 @@ function syncLayers() {
     g.moving = g.moving || !!item.motion;
     groups.set(key, g);
   }
-  layersEl.hidden = groups.size === 0;
+  layersEl.hidden = !layersOpen || groups.size === 0;
+  layersToggle.classList.toggle("active", layersOpen);
+  layersToggle.setAttribute("aria-pressed", String(layersOpen));
+  layersToggle.title = groups.size ? `Layers (${groups.size})` : "Layers";
   const rows = [...groups].reverse().map(([name, g]) => {
     const row = document.createElement("div");
     row.className = "layer" + (g.hidden ? " off" : "");
@@ -387,6 +419,9 @@ function renderMenu() {
     <div class="menu-row">
       <button type="button" class="mitem" data-act="new">${icon("blank")}<span>New sheet</span></button>
       <button type="button" class="mitem" data-act="save">${icon("save")}<span>Save</span><kbd>⌘S</kbd></button>
+    </div>
+    <div class="menu-row">
+      <button type="button" class="mitem" data-act="theme">${icon(theme === "charcoal" ? "blank" : "grid")}<span>${theme === "charcoal" ? "Paper theme" : "Charcoal theme"}</span></button>
     </div>
     <div class="menu-row">
       <button type="button" class="mitem" data-act="png">${icon("export")}<span>PNG</span></button>
@@ -464,6 +499,10 @@ menu.addEventListener("click", async (e) => {
       break;
     case "save":
       save();
+      break;
+    case "theme":
+      toggleTheme();
+      renderMenu();
       break;
     case "png":
       await exportPNG(paper, `${currentSheetName}.png`);

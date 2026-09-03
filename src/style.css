@@ -331,7 +331,9 @@ canvas {
   position: absolute;
   right: 28px;
   top: 12px;
-  width: 200px;
+  width: 210px;
+  z-index: 3;
+  box-shadow: var(--pill-shadow);
   max-height: calc(100% - 24px);
   overflow: auto;
   padding: 6px;
@@ -414,33 +416,41 @@ canvas {
 .strip {
   position: absolute;
   left: 50%;
-  bottom: 74px;
+  bottom: 68px;
   transform: translateX(-50%);
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: min(920px, calc(100% - 56px));
-  padding: 4px 6px;
-  border-radius: 14px;
-  background: var(--tray);
+  gap: 6px;
+  width: min(640px, calc(100% - 56px));
+  padding: 3px 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--tray) 94%, transparent);
   border: 1px solid var(--line);
-  box-shadow: var(--pill-shadow);
+}
+.strip .tool {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.strip .tool svg {
+  width: 18px;
+  height: 18px;
 }
 .strip[hidden] {
   display: none;
 }
 .clock {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
-  min-width: 96px;
+  min-width: 84px;
   text-align: center;
 }
 .scrub {
   position: relative;
   flex: 1;
-  height: 36px;
+  height: 30px;
   display: flex;
   align-items: center;
 }
@@ -520,7 +530,7 @@ canvas {
   }
 }
 .stage:has(.strip:not([hidden])) .picker {
-  bottom: 142px;
+  bottom: 118px;
 }
 .tray-inner,
 .picker {
