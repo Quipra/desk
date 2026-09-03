@@ -43,7 +43,7 @@ test("animation waiters settle after erase, undo, clear, and replay", async (t) 
   });
 });
 
-test("registration attempts all twelve tools and names each failure", async () => {
+test("registration attempts all fourteen tools and names each failure", async () => {
   const attempted: string[] = [];
   installDocument({
     registerTool(tool: { name: string }) {
@@ -54,15 +54,15 @@ test("registration attempts all twelve tools and names each failure", async () =
 
   const desk = await registerDesk(new Scene(), idlePaper(), { onActivity() {} });
 
-  assert.equal(attempted.length, 12);
+  assert.equal(attempted.length, 14);
   assert.equal(attempted.includes("write"), false);
-  assert.equal(desk.registered.length, 11);
+  assert.equal(desk.registered.length, 13);
   assert.deepEqual(attempted, desk.names);
   assert.equal(desk.connected, false);
   assert.deepEqual(desk.registrationErrors, ["compass: schema rejected"]);
 });
 
-test("registration classifies three read tools and nine state-changing tools", async () => {
+test("registration classifies three read tools and eleven state-changing tools", async () => {
   const registered: { name: string; annotations?: { readOnlyHint?: boolean } }[] = [];
   installDocument({ registerTool(tool) { registered.push(tool); } });
   const desk = await registerDesk(new Scene(), idlePaper(), { onActivity() {} });
@@ -70,7 +70,7 @@ test("registration classifies three read tools and nine state-changing tools", a
   assert.equal(desk.connected, true);
   assert.deepEqual(registered.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name), ["guide", "look", "measure"]);
   assert.deepEqual(registered.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name), [
-    "pick_pen", "draw", "ruler", "compass", "stencil", "erase", "undo", "new_sheet", "construct",
+    "pick_pen", "draw", "ruler", "compass", "stencil", "edit", "erase", "undo", "new_sheet", "make", "construct",
   ]);
   assert.equal(registered.filter((tool) => typeof tool.annotations?.readOnlyHint !== "boolean").length, 0);
   desk.dispose();
@@ -95,8 +95,134 @@ test("tool schemas use only the host-safe JSON Schema subset", async () => {
       walk(value, `${where}.${key}`);
     }
   };
-  assert.equal(registered.length, 12);
+  assert.equal(registered.length, 14);
   for (const tool of registered) walk(tool.inputSchema, tool.name);
+});
+
+test("measure returns exact crossings and mark properties", async () => {
+  installDocument({ registerTool() {} });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  const ab = await desk.call("ruler", { from: { x: 300, y: 400 }, to: { x: 700, y: 400 }, label: "AB" }) as { id: string };
+  const arcA = await desk.call("compass", { center: { x: 300, y: 400 }, radius: 300, label: "from A" }) as { id: string };
+  const arcB = await desk.call("compass", { center: { x: 700, y: 400 }, radius: 300, label: "from B" }) as { id: string };
+  const cross = await desk.call("measure", { a: arcA.id, b: arcB.id }) as { crossings: { x: number; y: number }[] };
+  assert.equal(cross.crossings.length, 2);
+  for (const p of cross.crossings) {
+    assert.equal(p.x, 500);
+    assert.ok(Math.abs(Math.abs(p.y - 400) - 223.6) < 0.2, `unexpected y ${p.y}`);
+  }
+  const onLine = await desk.call("measure", { a: ab.id, b: arcA.id }) as { crossings: { x: number; y: number }[] };
+  assert.deepEqual(onLine.crossings, [{ x: 600, y: 400 }]);
+  const props = await desk.call("measure", { of: ab.id }) as { length: number; midpoint: { x: number; y: number } };
+  assert.equal(props.length, 400);
+  assert.deepEqual(props.midpoint, { x: 500, y: 400 });
+  const quarter = await desk.call("compass", { center: { x: 300, y: 400 }, radius: 100, start: 0, end: 90, label: "quarter" }) as { id: string };
+  const vertical = await desk.call("ruler", { from: { x: 300, y: 200 }, to: { x: 300, y: 600 }, label: "v" }) as { id: string };
+  const q = await desk.call("measure", { a: quarter.id, b: vertical.id }) as { crossings: { x: number; y: number }[] };
+  assert.deepEqual(q.crossings, [{ x: 300, y: 500 }], "the arc only crosses below the center");
+  assert.ok("error" in (await desk.call("measure", { a: "nope", b: ab.id }) as object));
+});
+
+test("edit restyles, moves, duplicates and regroups without redrawing", async () => {
+  installDocument({ registerTool() {} });
+  Object.defineProperty(globalThis, "CSS", { configurable: true, value: { supports: () => true } });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  await desk.call("construct", { steps: [
+    { tool: "ruler", from: { x: 300, y: 300 }, to: { x: 500, y: 300 }, label: "top", group: "box" },
+    { tool: "ruler", from: { x: 300, y: 300 }, to: { x: 300, y: 500 }, label: "left", group: "box", pen: { kind: "fineliner", color: "blue", dash: true } },
+  ] });
+  assert.equal(scene.items[1].pen.kind, "fineliner");
+  assert.equal(scene.items[1].pen.color, "#729bdf");
+  assert.equal(scene.items[1].pen.dash, true);
+  const moved = await desk.call("edit", { group: "box", dx: 100, dy: 50, pen: { color: "accent" } }) as { edited: string[] };
+  assert.equal(moved.edited.length, 2);
+  const top = scene.items[0];
+  if (top.kind !== "line") throw new Error("expected line");
+  assert.deepEqual([top.from, top.to].map((p) => ({ x: p.x, y: p.y })), [{ x: 400, y: 350 }, { x: 600, y: 350 }]);
+  assert.equal(top.pen.color, "#dc716b");
+  const dup = await desk.call("edit", { ids: [top.id], duplicate: true, dy: 200, regroup: "copy" }) as { edited: string[] };
+  assert.equal(scene.items.length, 3);
+  assert.equal(scene.items[2].group, "copy");
+  assert.equal(scene.items[2].id, dup.edited[0]);
+  assert.equal(top.group, "box", "original keeps its group");
+  const scaled = await desk.call("edit", { ids: [top.id], scale: 2, about: { x: 400, y: 350 } }) as { marks: { bbox: { w: number } }[] };
+  assert.equal(scaled.marks[0].bbox.w, 400 + 2 * 2.5);
+  assert.ok("error" in (await desk.call("edit", { ids: [top.id] }) as object));
+  assert.equal((await desk.call("erase", { group: "copy" }) as { removed: string[] }).removed.length, 1);
+});
+
+test("make creates brushes and recipes the agent can reuse", async () => {
+  installDocument({ registerTool() {} });
+  Object.defineProperty(globalThis, "CSS", { configurable: true, value: { supports: () => true } });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  const brush = await desk.call("make", { kind: "brush", name: "inkwash", description: "soft wash", pen: { kind: "brush", width: 14, opacity: 0.35, texture: "chalk", taper: true, color: "blue" } }) as { pen: { texture: string; brush: string } };
+  assert.equal(brush.pen.texture, "chalk");
+  assert.equal(brush.pen.brush, "inkwash");
+  await desk.call("draw", { points: [{ x: 100, y: 100 }, { x: 300, y: 120 }], label: "wash", pen: { brush: "inkwash", opacity: 0.5 } });
+  assert.equal(scene.items[0].pen.brush, "inkwash");
+  assert.equal(scene.items[0].pen.opacity, 0.5);
+  assert.equal(scene.items[0].pen.taper, true);
+  assert.equal(scene.items[0].pen.color, "#729bdf");
+  assert.ok("error" in (await desk.call("draw", { points: [{ x: 1, y: 1 }], label: "x", pen: { brush: "nope" } }) as object));
+
+  const steps = JSON.stringify([
+    { tool: "compass", center: "$A", radius: "hypot($B.x-$A.x,$B.y-$A.y)*0.6", label: "arc A", pen: { kind: "pencil", dash: true } },
+    { tool: "compass", center: "$B", radius: "hypot($B.x-$A.x,$B.y-$A.y)*0.6", label: "arc B", pen: { kind: "pencil", dash: true } },
+    { tool: "ruler", from: { x: "($A.x+$B.x)/2", y: "($A.y+$B.y)/2 - 150" }, to: { x: "($A.x+$B.x)/2", y: "($A.y+$B.y)/2 + 150" }, label: "$name" },
+  ]);
+  const made = await desk.call("make", { kind: "recipe", name: "bisector", params: ["A", "B", "name"], steps }) as { made: string; params: string[] };
+  assert.equal(made.made, "recipe");
+  const run = await desk.call("construct", { steps: [{ tool: "recipe", name: "bisector", args: [{ name: "A", x: 300, y: 400 }, { name: "B", x: 700, y: 400 }, { name: "name", text: "bisector of AB" }] }] }) as { done: number; results: { results: { tool: string; radius?: number }[] }[] };
+  assert.equal(run.done, 1);
+  assert.equal(run.results[0].results.length, 3);
+  assert.equal(run.results[0].results[0].radius, 240);
+  const line = scene.items.at(-1);
+  if (line?.kind !== "line") throw new Error("expected line");
+  assert.deepEqual([line.from.x, line.from.y, line.to.y], [500, 250, 550]);
+  assert.equal(line.label, "bisector of AB");
+  assert.equal(scene.items.at(-2)?.pen.dash, true);
+  const missing = await desk.call("construct", { steps: [{ tool: "recipe", name: "bisector", args: [{ name: "A", x: 1, y: 1 }] }] }) as { error: string };
+  assert.match(missing.error, /needs \$B, \$name/);
+  const bad = await desk.call("make", { kind: "recipe", name: "broken", steps: "[{\"tool\":\"fly\"}]" }) as { error: string };
+  assert.match(bad.error, /tool must be one of/);
+  const look = await desk.call("look") as { custom: { brushes: { name: string }[]; recipes: { name: string; params: string[] }[] } };
+  assert.deepEqual(look.custom.brushes.map((b) => b.name), ["inkwash"]);
+  assert.deepEqual(look.custom.recipes[0].params, ["A", "B", "name"]);
+});
+
+test("recipe expressions evaluate safely", async () => {
+  const { evaluate, substitute } = await import("../src/recipes.ts");
+  const params = { A: { x: 100, y: 200 }, r: 50, t: "hi" };
+  assert.equal(evaluate("($A.x + 300) / 2", params), 200);
+  assert.equal(evaluate("hypot(3, 4) * $r", params), 250);
+  assert.equal(evaluate("cos(60) * 2", params).toFixed(3), "1.000");
+  assert.equal(evaluate("2 ^ 3 ^ 2", params), 512);
+  assert.equal(evaluate("-$r + 10", params), -40);
+  assert.throws(() => evaluate("$A + 1", params), /\$A\.x or \$A\.y/);
+  assert.throws(() => evaluate("$t * 2", params), /text/);
+  assert.throws(() => evaluate("window.alert(1)", params), /unknown function|unexpected|cannot read/);
+  assert.throws(() => evaluate("1 / 0", params), /finite/);
+  assert.deepEqual(substitute({ center: "$A", radius: "$r*2", label: "plain text", pen: { dash: true } }, params), { center: { x: 100, y: 200 }, radius: 100, label: "plain text", pen: { dash: true } });
+});
+
+test("first look carries the guide once and later looks report what changed", async () => {
+  installDocument({ registerTool() {} });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  const first = await desk.call("look") as { guide?: string; changes: unknown };
+  assert.ok(first.guide?.includes("DESK"));
+  assert.equal(first.changes, null);
+  scene.add({ kind: "line", from: { x: 10, y: 10 }, to: { x: 50, y: 10 }, arrow: false }, { label: "student mark", author: "human", pen: PEN_PRESETS.pencil });
+  const second = await desk.call("look") as { guide?: string; changes: { added: { author: string }[]; removed: string[] } };
+  assert.equal(second.guide, undefined);
+  assert.equal(second.changes.added.length, 1);
+  assert.equal(second.changes.added[0].author, "human");
+  const built = await desk.call("construct", { verify: true, steps: [{ tool: "ruler", from: { x: 100, y: 100 }, to: { x: 200, y: 100 }, label: "x" }] }) as { sheet: { count: number; changes: { added: unknown[] } } };
+  assert.equal(built.sheet.count, 2);
+  assert.equal(built.sheet.changes.added.length, 1);
 });
 
 test("construct runs steps in order with the shared pen and stops at the first bad step", async () => {
@@ -117,10 +243,10 @@ test("construct runs steps in order with the shared pen and stops at the first b
   assert.match(result.error ?? "", /^step 3 \(ruler\): from\.x/);
   assert.equal(scene.items.length, 2);
   assert.equal(scene.items[0].pen.width, 5);
-  assert.deepEqual(await desk.call("construct", { steps: [{ tool: "guide" }] }), { done: 0, results: [], error: "step 0: tool must be one of pick_pen, draw, ruler, compass, stencil, erase, undo" });
+  assert.deepEqual(await desk.call("construct", { steps: [{ tool: "guide" }] }), { done: 0, results: [], error: "step 0: tool must be one of pick_pen, draw, ruler, compass, stencil, edit, erase, undo, recipe" });
   const guide = await desk.call("guide") as { guide: string; tools: string[] };
   assert.ok(guide.guide.includes("1200 wide x 800 tall"));
-  assert.equal(guide.tools.length, 12);
+  assert.equal(guide.tools.length, 14);
 });
 
 test("grouped strokes preserve pen lifts and undo as one mark", async () => {
@@ -358,8 +484,8 @@ test("tool calls reject malformed values with field-specific errors", async () =
     await desk.call("ruler", { from: { x: "10", y: 20 }, to: { x: 30, y: 40 }, label: "line" }),
     { error: "from.x must be a finite number" },
   );
-  assert.deepEqual(await desk.call("erase", {}), { error: "erase needs ids and/or a region" });
-  assert.deepEqual(await desk.call("pick_pen", { kind: "marker", color: "not-a-color" }), { error: "color must be a valid CSS color" });
+  assert.deepEqual(await desk.call("erase", {}), { error: "select marks with ids, group and/or region" });
+  assert.deepEqual(await desk.call("pick_pen", { kind: "marker", color: "not-a-color" }), { error: "color must be one of ink, auto, accent, blue, green, ochre or a valid CSS color" });
 });
 
 function installDocument(modelContext: { registerTool(tool: { name: string }): void }) {

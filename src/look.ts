@@ -1,7 +1,7 @@
 // How an agent sees the paper. Tool results are text, so "looking" returns a
 // labeled inventory of every mark plus a coarse character raster of the sheet.
 
-import { bbox, PAPER_H, PAPER_W, shapeVertices, type BBox, type Item, type Pt, type Scene } from "./scene.ts";
+import { arcPoints, bbox, PAPER_H, PAPER_W, shapeVertices, type BBox, type Item, type Pt, type Scene } from "./scene.ts";
 
 const CELL = 25; // paper units per raster cell
 const COLS = PAPER_W / CELL; // 48
@@ -13,6 +13,7 @@ const AGENT = 2;
 export interface ItemSummary {
   id: string;
   label: string;
+  group?: string;
   author: string;
   kind: string;
   pen: string;
@@ -47,9 +48,10 @@ function summarize(item: Item): ItemSummary {
   return {
     id: item.id,
     label: item.label,
+    ...(item.group ? { group: item.group } : {}),
     author: item.author,
     kind: item.kind,
-    pen: `${item.pen.kind} ${item.pen.color} w${item.pen.width}`,
+    pen: `${item.pen.kind} ${item.pen.color} w${item.pen.width}${item.pen.dash ? " dashed" : ""}`,
     bbox: { x: r(b.x), y: r(b.y), w: r(b.w), h: r(b.h) },
     detail: detailOf(item),
   };
@@ -73,7 +75,7 @@ function detailOf(item: Item): string {
 }
 
 function geometryOf(item: Item) {
-  const { id: _id, label: _label, author: _author, pen: _pen, ...geometry } = item;
+  const { id: _id, label: _label, author: _author, pen: _pen, group: _group, ...geometry } = item;
   if (geometry.kind !== "stroke") return geometry;
   // Bounded detail preserves endpoints and pen lifts without returning tens of
   // thousands of smoothed points to the model for each word.
@@ -127,16 +129,8 @@ function polylines(item: Item): Pt[][] {
       return item.paths;
     case "line":
       return [[item.from, item.to]];
-    case "arc": {
-      const pts: Pt[] = [];
-      const span = item.end - item.start;
-      const steps = Math.max(8, Math.min(48, Math.ceil((Math.abs(span) / 360) * 48)));
-      for (let i = 0; i <= steps; i++) {
-        const a = ((item.start + (span * i) / steps) * Math.PI) / 180;
-        pts.push({ x: item.cx + item.r * Math.cos(a), y: item.cy + item.r * Math.sin(a) });
-      }
-      return [pts];
-    }
+    case "arc":
+      return [arcPoints(item, Math.max(8, Math.min(48, Math.ceil((Math.abs(item.end - item.start) / 360) * 48))))];
     case "shape": {
       const v = shapeVertices(item);
       return [[...v, v[0]]];

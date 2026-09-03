@@ -2,11 +2,11 @@ import "./style.css";
 import { applyTheme, type Theme } from "./appearance.ts";
 import { Instruments, type Mode } from "./instruments.ts";
 import { Paper } from "./paper.ts";
-import { Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
+import { PALETTE, Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
 import { registerDesk } from "./webmcp.ts";
 
-const COLORS = ["auto", "#dc716b", "#729bdf", "#70ae87", "#cda361"];
-const COLOR_NAMES = ["Graphite · follows paper theme", "Terracotta", "Blue", "Sage", "Ochre"];
+const COLORS = [PALETTE.ink, PALETTE.accent, PALETTE.blue, PALETTE.green, PALETTE.ochre];
+const COLOR_NAMES = ["ink · follows paper theme", "accent", "blue", "green", "ochre"];
 let theme: Theme = "charcoal";
 try { if (localStorage.getItem("desk-theme") === "paper") theme = "paper"; } catch { /* Drawing works without storage. */ }
 applyTheme(theme);
@@ -30,8 +30,10 @@ app.innerHTML = `
     <div class="tray-inner">
       <div class="group" id="pens" role="group" aria-label="Pens">
         <button type="button" class="tool active" data-pen="pencil" aria-pressed="true">pencil</button>
+        <button type="button" class="tool" data-pen="fineliner" aria-pressed="false">fineliner</button>
         <button type="button" class="tool" data-pen="marker" aria-pressed="false">marker</button>
         <button type="button" class="tool" data-pen="brush" aria-pressed="false">brush</button>
+        <button type="button" class="tool" data-pen="highlighter" aria-pressed="false">highlighter</button>
       </div>
       <div class="group" id="colors" role="group" aria-label="Ink colors"></div>
       <div class="group" id="modes" role="group" aria-label="Drawing tools">

@@ -26,24 +26,28 @@ Prompts that show it off:
 
 ## Instruments
 
-Twelve tools registered with `document.modelContext.registerTool` (with a `navigator.modelContext` fallback). All of them write to the same scene the person's pointer writes to.
+Fourteen tools registered with `document.modelContext.registerTool` (with a `navigator.modelContext` fallback). All of them write to the same scene the person's pointer writes to.
 
 | Tool | On the desk |
 |---|---|
-| `guide` | How the desk works: coordinates, instruments, lettering, ruler-and-compass recipes. Read once per session |
-| `look` | Every mark with id, label, author, pen and bounding box, plus a 48 × 32 map of where ink is |
-| `measure` | Distance and angle between two points, without drawing |
-| `pick_pen` | Pencil, marker, or brush, with color, width, opacity |
+| `guide` | How the desk works: coordinates, instruments, pens, lettering, recipes, ruler-and-compass constructions. The first `look` includes it |
+| `look` | Every mark with id, label, group, author, pen and bounding box, what changed since the last look, the agent's own brushes and recipes, and a 48 × 32 map of where ink is |
+| `measure` | Exact geometry without ink: distance and angle between points, one mark's length, midpoint, center, radius or vertices, or the exact crossing points of two marks |
+| `pick_pen` | Default pen for later marks. Any mark can carry its own inline pen instead |
 | `draw` | Freehand: one stroke, or several pen-down paths as one mark. Letters are drawn this way |
 | `ruler` | Straight line, optional arrowhead |
 | `compass` | Circle or arc from a center and radius |
 | `stencil` | Rectangle, triangle, or regular polygon |
-| `erase` | By id or region |
+| `edit` | Change existing marks without redrawing: restyle, move, scale, rotate, relabel, regroup, duplicate (paste) |
+| `erase` | By ids, group, or region |
 | `undo` | Lift the agent's last mark |
 | `new_sheet` | Fresh paper: blank, grid, or lined |
-| `construct` | Up to 40 instrument steps in one call, for a whole figure |
+| `make` | The agent's own tools: a named brush it designs, or a recipe of construct steps with `$params` and expressions |
+| `construct` | Up to 40 instrument steps in one call, including recipes. `verify: true` returns the sheet in the same result |
 
-The paper is 1200 × 800 units, origin top-left. Tool results are JSON, so `look` is how the agent sees. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
+Five pens: pencil, fineliner, marker, brush, highlighter. Every pen can be dashed, tapered, textured (grain or chalk), and can fill closed shapes and circles with hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
+
+Designed for few round-trips. A typical figure is one `look`, one `construct` with `verify`, done. The guide rides along with the first look, pens are inline, exact points come from `measure`, and the agent can write a recipe once and stamp it with different parameters.
 
 Tool schemas stay inside the JSON Schema subset chat hosts accept for tool definitions (type, properties, required, enum, items, description, additionalProperties). Ranges are validated in code. A test guards this, because a single `oneOf` or `minimum` makes a tool unusable in ChatGPT.
 
@@ -61,12 +65,14 @@ npm run build
 In the browser console, `desk.call(name, input)` calls any instrument directly:
 
 ```js
-await desk.call("construct", { steps: [
-  { tool: "pick_pen", kind: "marker" },
-  { tool: "ruler", from: { x: 300, y: 400 }, to: { x: 900, y: 400 }, label: "segment AB" },
-  { tool: "compass", center: { x: 300, y: 400 }, radius: 380, start: -60, end: 60, label: "arc from A" },
+await desk.call("make", { kind: "recipe", name: "arcs", params: ["A", "B"], steps: JSON.stringify([
+  { tool: "compass", center: "$A", radius: "hypot($B.x-$A.x,$B.y-$A.y)*0.6", label: "arc A", pen: { kind: "pencil", dash: true } },
+  { tool: "compass", center: "$B", radius: "hypot($B.x-$A.x,$B.y-$A.y)*0.6", label: "arc B", pen: { kind: "pencil", dash: true } },
+]) });
+await desk.call("construct", { verify: true, steps: [
+  { tool: "ruler", from: { x: 300, y: 400 }, to: { x: 900, y: 400 }, label: "segment AB", pen: { kind: "marker" } },
+  { tool: "recipe", name: "arcs", args: [{ name: "A", x: 300, y: 400 }, { name: "B", x: 900, y: 400 }] },
 ] });
-await desk.call("look");
 ```
 
 ## Layout
@@ -74,7 +80,9 @@ await desk.call("look");
 - `src/scene.ts` — the shared scene: items, authors, pens, bounding boxes
 - `src/paper.ts` — canvas rendering, ribbon strokes, reveal animation, glow, replay
 - `src/instruments.ts` — the person's pointer gestures
-- `src/webmcp.ts` — the agent's twelve tools, validation and lifecycle
+- `src/webmcp.ts` — the agent's fourteen tools, validation and lifecycle
+- `src/geometry.ts` — exact intersections and mark properties for `measure`
+- `src/recipes.ts` — the expression evaluator behind agent-made recipes
 - `src/guide.ts` — what the `guide` tool returns
 - `src/look.ts` — how the agent sees the sheet
 - `src/appearance.ts` — theme palette shared by DOM and canvas

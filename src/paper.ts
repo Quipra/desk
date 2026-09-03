@@ -2,7 +2,7 @@
 // with a glow so a person can watch the agent draw, then everything settles
 // into plain ink. Replay re-reveals every item in order.
 
-import { clampPt, PAPER_H, PAPER_W, shapeVertices, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
+import { bbox, clampPt, PAPER_H, PAPER_W, shapeVertices, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
 import { inkColor, THEMES, type Theme } from "./appearance.ts";
 
 const GLOW_MS = 1400;
@@ -45,6 +45,7 @@ export class Paper {
     scene.on((e) => {
       if (e.type === "add" && e.item.author === "agent") this.enqueue(e.item);
       if (e.type === "remove") for (const id of e.ids) this.forget(id);
+      if (e.type === "change") for (const id of e.ids) this.glowUntil.set(id, performance.now() + GLOW_MS);
       if (e.type === "clear") {
         this.progress.clear();
         this.glowUntil.clear();
@@ -54,6 +55,7 @@ export class Paper {
         this.finishIfIdle();
       }
       this.render();
+      if (e.type === "change") this.tick();
     });
   }
 
@@ -248,10 +250,21 @@ export class Paper {
       ctx.fillStyle = inkColor(pen.color, this.theme);
       ctx.globalAlpha = pen.opacity;
       ctx.lineWidth = pen.width;
+      if (pen.dash) ctx.setLineDash([Math.max(6, pen.width * 3), Math.max(5, pen.width * 2.5)]);
     }
     switch (item.kind) {
       case "stroke":
-        if (t >= 1) {
+        if (pen.dash && !opts) {
+          // Dashed freehand: a stroked polyline at the pen's base width.
+          for (const { points, progress } of pathProgress(item.paths, t)) {
+            const pts = revealed(points, progress);
+            if (pts.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.stroke();
+          }
+        } else if (t >= 1) {
           // Settled ink needs no per-frame length/progress calculations.
           for (const points of item.paths) this.drawStroke(ctx, points, pen, 1, opts ? 10 : 0);
         } else {
@@ -274,12 +287,64 @@ export class Paper {
         ctx.beginPath();
         ctx.arc(item.cx, item.cy, item.r, (item.start * Math.PI) / 180, (end * Math.PI) / 180, item.end < item.start);
         ctx.stroke();
+        if (pen.fill && t >= 1 && !opts && Math.abs(item.end - item.start) >= 360) {
+          ctx.beginPath();
+          ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2);
+          this.drawFill(ctx, item, pen, { x: item.cx - item.r, y: item.cy - item.r, w: item.r * 2, h: item.r * 2 });
+        }
         break;
       }
       case "shape": {
         const verts = shapeVertices(item);
         drawPartialPolygon(ctx, verts, t);
+        if (pen.fill && t >= 1 && !opts) {
+          ctx.beginPath();
+          ctx.moveTo(verts[0].x, verts[0].y);
+          for (const v of verts.slice(1)) ctx.lineTo(v.x, v.y);
+          ctx.closePath();
+          const b = bbox(item);
+          this.drawFill(ctx, item, pen, b);
+        }
         break;
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Illustrative fills are ink too: hatch lines or stipple dots clipped to the current path. */
+  private drawFill(ctx: CanvasRenderingContext2D, item: Item, pen: Pen, b: { x: number; y: number; w: number; h: number }) {
+    ctx.save();
+    ctx.clip();
+    ctx.setLineDash([]);
+    ctx.lineWidth = Math.max(0.8, pen.width * 0.45);
+    const seed = item.id.split("").reduce((s, c) => s + c.charCodeAt(0), 0);
+    if (pen.fill === "stipple") {
+      const count = Math.min(4000, Math.round((b.w * b.h) / Math.max(12, pen.width * 6)));
+      for (let i = 0; i < count; i++) {
+        const x = b.x + noise(i * 2, seed) * b.w;
+        const y = b.y + noise(i * 2 + 1, seed) * b.h;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.6, pen.width * 0.25) * (0.6 + noise(i, seed + 1)), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      const spacing = Math.max(6, pen.width * 3.5);
+      const angles = pen.fill === "crosshatch" ? [pen.hatchAngle ?? 45, (pen.hatchAngle ?? 45) + 90] : [pen.hatchAngle ?? 45];
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      const reach = Math.hypot(b.w, b.h) / 2 + spacing;
+      for (const deg of angles) {
+        const a = (deg * Math.PI) / 180;
+        const dx = Math.cos(a);
+        const dy = Math.sin(a);
+        ctx.beginPath();
+        for (let o = -reach; o <= reach; o += spacing) {
+          const ox = cx - dy * o;
+          const oy = cy + dx * o;
+          ctx.moveTo(ox - dx * reach, oy - dy * reach);
+          ctx.lineTo(ox + dx * reach, oy + dy * reach);
+        }
+        ctx.stroke();
       }
     }
     ctx.restore();
@@ -287,9 +352,30 @@ export class Paper {
 
   /** Strokes are filled ribbons so width can vary smoothly with pressure. */
   private drawStroke(ctx: CanvasRenderingContext2D, all: Pt[], pen: Pen, t: number, extra: number) {
+    if (pen.texture === "chalk" && !extra) {
+      // Chalk: three soft offset passes read as a dry, dusty edge.
+      const alpha = ctx.globalAlpha;
+      ctx.globalAlpha = alpha * 0.45;
+      for (const [ox, oy] of [[-1.2, 0.8], [1.1, -0.9], [0, 0]] as const) {
+        this.drawRibbon(ctx, all.map((p) => ({ ...p, x: p.x + ox, y: p.y + oy })), pen, t, extra);
+      }
+      ctx.globalAlpha = alpha;
+      return;
+    }
+    this.drawRibbon(ctx, all, pen, t, extra);
+  }
+
+  private drawRibbon(ctx: CanvasRenderingContext2D, all: Pt[], pen: Pen, t: number, extra: number) {
     const pts = revealed(all, t);
     if (pts.length === 0) return;
-    const half = (i: number) => widthFor(pen, pts[i].p) / 2 + extra / 2;
+    const n = pts.length;
+    const taperLen = pen.taper ? Math.max(2, Math.min(14, Math.floor(n / 3))) : 0;
+    const half = (i: number) => {
+      let w = widthFor(pen, pts[i].p) / 2 + extra / 2;
+      if (taperLen) w *= Math.min(1, (i + 1) / taperLen, (n - i) / taperLen);
+      if (pen.texture === "grain" && !extra) w *= 0.8 + 0.4 * noise(i, Math.round(pts[0].x + pts[0].y));
+      return Math.max(0.3, w);
+    };
     ctx.beginPath();
     if (pts.length === 1) {
       ctx.arc(pts[0].x, pts[0].y, half(0), 0, Math.PI * 2);
@@ -305,8 +391,9 @@ export class Paper {
       const nx = -(b.y - a.y) / len;
       const ny = (b.x - a.x) / len;
       const w = half(i);
-      left.push({ x: pts[i].x + nx * w, y: pts[i].y + ny * w });
-      right.push({ x: pts[i].x - nx * w, y: pts[i].y - ny * w });
+      const g = pen.texture === "grain" && !extra ? (noise(i * 7, 3) - 0.5) * w : 0;
+      left.push({ x: pts[i].x + nx * (w + g), y: pts[i].y + ny * (w + g) });
+      right.push({ x: pts[i].x - nx * (w - g), y: pts[i].y - ny * (w - g) });
     }
     ctx.moveTo(left[0].x, left[0].y);
     for (let i = 1; i < left.length; i++) ctx.lineTo(left[i].x, left[i].y);
@@ -368,7 +455,7 @@ export function smooth(pts: Pt[]): Pt[] {
   return out;
 }
 
-/** How pressure shapes the line for each instrument. Brushes respond most. */
+/** How pressure shapes the line for each instrument. Brushes respond most; fineliner and highlighter not at all. */
 export function widthFor(pen: Pen, pressure = 0.5): number {
   const p = Math.max(0, Math.min(1, pressure));
   switch (pen.kind) {
@@ -378,6 +465,9 @@ export function widthFor(pen: Pen, pressure = 0.5): number {
       return pen.width * (0.85 + 0.3 * p);
     case "brush":
       return pen.width * (0.25 + 1.5 * p);
+    case "fineliner":
+    case "highlighter":
+      return pen.width;
   }
 }
 
@@ -474,6 +564,12 @@ export function pathProgress(paths: Pt[][], t: number) {
     remaining -= lengths[index];
     return { points, progress };
   });
+}
+
+/** Deterministic 0..1 noise so textures stay put between frames and replays. */
+function noise(i: number, seed: number): number {
+  const x = Math.sin(i * 12.9898 + seed * 78.233) * 43758.5453;
+  return x - Math.floor(x);
 }
 
 function lerp(a: Pt, b: Pt, t: number): Pt {

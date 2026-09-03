@@ -34,7 +34,8 @@ export class Instruments {
   setPenKind(kind: PenKind) {
     this.cancel();
     const preset = PEN_PRESETS[kind];
-    this.pen = { ...preset, color: this.pen.color };
+    // The highlighter keeps its own ochre; every other pen keeps the chosen ink.
+    this.pen = { ...preset, color: kind === "highlighter" ? preset.color : this.pen.color };
     this.mode = "pen";
     this.onChange?.();
   }

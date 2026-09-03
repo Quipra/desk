@@ -5,9 +5,12 @@ export const PAPER_W = 1200;
 export const PAPER_H = 800;
 
 export type Author = "human" | "agent";
-export type PenKind = "pencil" | "marker" | "brush";
+export type PenKind = "pencil" | "fineliner" | "marker" | "brush" | "highlighter";
 export type PaperKind = "blank" | "grid" | "lined";
 export type StencilShape = "rectangle" | "triangle" | "polygon";
+
+export type Texture = "grain" | "chalk";
+export type Fill = "hatch" | "crosshatch" | "stipple";
 
 export interface Pen {
   kind: PenKind;
@@ -15,6 +18,18 @@ export interface Pen {
   color: string;
   width: number;
   opacity: number;
+  /** Dashed ink, the convention for construction lines. */
+  dash?: boolean;
+  /** Name of the agent-made brush this pen came from, for the record. */
+  brush?: string;
+  /** Edge character of freehand strokes. */
+  texture?: Texture;
+  /** Thin ends, like a real brush lifting off. */
+  taper?: boolean;
+  /** Illustrative fill drawn as ink inside closed shapes and circles. */
+  fill?: Fill;
+  /** Hatch direction in degrees, default 45. */
+  hatchAngle?: number;
 }
 
 export interface Pt {
@@ -29,6 +44,8 @@ interface Base {
   label: string;
   author: Author;
   pen: Pen;
+  /** Optional name shared by marks that belong together, like a layer. */
+  group?: string;
 }
 
 export type Geometry =
@@ -48,14 +65,27 @@ export interface BBox {
 
 export const PEN_PRESETS: Record<PenKind, Pen> = {
   pencil: { kind: "pencil", color: "auto", width: 2.5, opacity: 0.9 },
+  fineliner: { kind: "fineliner", color: "auto", width: 2, opacity: 1 },
   marker: { kind: "marker", color: "auto", width: 6, opacity: 0.85 },
   brush: { kind: "brush", color: "auto", width: 9, opacity: 0.8 },
+  highlighter: { kind: "highlighter", color: "#cda361", width: 18, opacity: 0.35 },
+};
+
+/** Named inks. "ink" follows the paper theme; the rest are fixed so figures stay consistent. */
+export const PALETTE: Record<string, string> = {
+  ink: "auto",
+  auto: "auto",
+  accent: "#dc716b",
+  blue: "#729bdf",
+  green: "#70ae87",
+  ochre: "#cda361",
 };
 
 type Listener = (event: SceneEvent) => void;
 export type SceneEvent =
   | { type: "add"; item: Item }
   | { type: "remove"; ids: string[] }
+  | { type: "change"; ids: string[] }
   | { type: "clear" }
   | { type: "paper"; paper: PaperKind };
 
@@ -79,11 +109,25 @@ export class Scene {
     return `${prefix}${this.counter}`;
   }
 
-  add(geometry: Geometry, meta: { label: string; author: Author; pen: Pen }): Item {
+  add(geometry: Geometry, meta: { label: string; author: Author; pen: Pen; group?: string }): Item {
     const item = { ...geometry, ...meta, pen: { ...meta.pen }, id: this.nextId(geometry.kind[0]) } as Item;
+    if (!item.group) delete item.group;
     this.items.push(item);
     this.emit({ type: "add", item });
     return item;
+  }
+
+  /** Replace items in place (same ids), then notify renderers. */
+  update(next: Item[]) {
+    const ids: string[] = [];
+    for (const item of next) {
+      const at = this.items.findIndex((i) => i.id === item.id);
+      if (at === -1) continue;
+      this.items[at] = item;
+      ids.push(item.id);
+    }
+    if (ids.length) this.emit({ type: "change", ids });
+    return ids;
   }
 
   remove(ids: string[]): string[] {
@@ -153,25 +197,32 @@ export function shapeVertices(s: Extract<Geometry, { kind: "shape" }>): Pt[] {
   return pts.map((p) => ({ x: s.x + p.x * c - p.y * sn, y: s.y + p.x * sn + p.y * c }));
 }
 
+/** Points along an arc, used for bounds, rasters and intersections. */
+export function arcPoints(a: Extract<Geometry, { kind: "arc" }>, steps = 48): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const ang = ((a.start + ((a.end - a.start) * i) / steps) * Math.PI) / 180;
+    pts.push({ x: a.cx + a.r * Math.cos(ang), y: a.cy + a.r * Math.sin(ang) });
+  }
+  return pts;
+}
+
 export function bbox(item: Item): BBox {
   switch (item.kind) {
     case "stroke":
       return ptsBox(item.paths.flat(), item.pen.width);
     case "line":
       return ptsBox([item.from, item.to], item.pen.width);
-    case "arc": {
-      // Approximate with points along the arc so partial arcs get tight boxes.
-      const pts: Pt[] = [];
-      const steps = 24;
-      for (let i = 0; i <= steps; i++) {
-        const a = ((item.start + ((item.end - item.start) * i) / steps) * Math.PI) / 180;
-        pts.push({ x: item.cx + item.r * Math.cos(a), y: item.cy + item.r * Math.sin(a) });
-      }
-      return ptsBox(pts, item.pen.width);
-    }
+    case "arc":
+      return ptsBox(arcPoints(item, 24), item.pen.width);
     case "shape":
       return ptsBox(shapeVertices(item), item.pen.width);
   }
+}
+
+export function center(item: Item): Pt {
+  const b = bbox(item);
+  return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
 
 function ptsBox(pts: Pt[], pad: number): BBox {
@@ -195,4 +246,44 @@ export function clampPt(p: Pt): Pt {
     y: Math.max(0, Math.min(PAPER_H, p.y)),
     p: p.p === undefined ? undefined : Math.max(0, Math.min(1, p.p)),
   };
+}
+
+export interface Transform {
+  dx?: number;
+  dy?: number;
+  /** Uniform scale about `about` (defaults to the mark's center). */
+  scale?: number;
+  /** Degrees clockwise about `about`. */
+  rotate?: number;
+  about?: Pt;
+}
+
+/** A moved, scaled or rotated copy of a mark. Pure; the scene decides whether to keep it. */
+export function transformItem(item: Item, t: Transform): Item {
+  const about = t.about ?? center(item);
+  const s = t.scale ?? 1;
+  const rad = ((t.rotate ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = t.dx ?? 0;
+  const dy = t.dy ?? 0;
+  const map = (p: Pt): Pt => {
+    const x = (p.x - about.x) * s;
+    const y = (p.y - about.y) * s;
+    return clampPt({ x: about.x + x * cos - y * sin + dx, y: about.y + x * sin + y * cos + dy, p: p.p });
+  };
+  switch (item.kind) {
+    case "stroke":
+      return { ...item, paths: item.paths.map((path) => path.map(map)) };
+    case "line":
+      return { ...item, from: map(item.from), to: map(item.to) };
+    case "arc": {
+      const c = map({ x: item.cx, y: item.cy });
+      return { ...item, cx: c.x, cy: c.y, r: Math.max(1, item.r * s), start: item.start + (t.rotate ?? 0), end: item.end + (t.rotate ?? 0) };
+    }
+    case "shape": {
+      const c = map({ x: item.x, y: item.y });
+      return { ...item, x: c.x, y: c.y, w: Math.max(2, item.w * s), h: Math.max(2, item.h * s), rotation: item.rotation + (t.rotate ?? 0) };
+    }
+  }
 }

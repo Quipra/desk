@@ -1,20 +1,26 @@
-// What an agent needs to know to work well at the desk. Served by the `guide`
-// tool so the model can read it once per session instead of guessing.
+// What an agent needs to know to work well at the desk. Returned by `guide`
+// and folded into the first `look` of a session so the model reads it once.
 
 import { PAPER_H, PAPER_W } from "./scene.ts";
 
-export const GUIDE = `DESK: one sheet of paper shared by a person and you. You draw with instruments, not code.
+export const GUIDE = `DESK: one sheet of paper shared by a person and you. You draw with instruments, not code. Fewer, larger calls are better: plan, then send a whole figure in one construct call, then look once.
 
-PAPER. ${PAPER_W} wide x ${PAPER_H} tall paper units. Origin top-left, x right, y down. Angles in degrees, 0 = right, 90 = down. Keep 60 units of margin. The person sees every mark appear live.
+PAPER. ${PAPER_W} wide x ${PAPER_H} tall paper units. Origin top-left, x right, y down. Angles in degrees, 0 = right, 90 = down, clockwise. Keep 60 units of margin; put a figure inside roughly 300..900 x 150..650 so labels fit. The person watches every mark appear.
 
-WORKFLOW. 1) look. 2) plan positions on paper, keep a figure inside roughly 300..900 x 150..650 so labels fit. 3) pick_pen once, then draw with ruler, compass, stencil, draw. 4) look again and fix with erase or undo. Use construct to send several steps in one call; it is faster and keeps a figure together.
+LOOP. look (once) -> plan positions -> construct with all steps and verify: true -> read the returned marks and raster -> fix with edit, erase or undo only if something is wrong. Do not look after every mark. Use measure for exact geometry instead of estimating.
 
-INSTRUMENTS. ruler = exact straight line (arrow: true for a pointer). compass = circle or arc, give start/end for arcs. stencil = rectangle, triangle (apex up), regular polygon. draw = freehand: a list of points, or strokes (several pen-down paths in one mark). measure = distance and angle, no ink. erase = by id or region. undo = your last mark. new_sheet clears everything, ask first.
+INSTRUMENTS. ruler = exact line (arrow: true for a pointer). compass = circle or arc (start/end for arcs). stencil = rectangle, triangle (apex up), regular polygon. draw = freehand points, or strokes (several pen-down paths as one mark). measure = distance/angle between two points, OR "of" one mark id for its length, midpoint, center, radius, vertices, OR "between" two mark ids for their exact crossing points. edit = change existing marks without redrawing: restyle (pen), move (dx, dy), scale, rotate, relabel, regroup, or duplicate. erase = by ids, group or region. undo = your last mark. new_sheet clears everything; ask first.
 
-PENS. pencil for construction lines, marker for the final figure, brush for emphasis. Color "auto" is readable on both paper themes. Use one accent color (for example #dc716b) for the thing you are explaining, everything else auto.
+PENS. Any step may carry an inline pen: { kind, color, width, opacity, dash }. Kinds: pencil (thin, textured), fineliner (crisp constant width, for final lines), marker (bold), brush (soft, pressure-sensitive), highlighter (wide, translucent). dash: true for construction lines. Colors by name: ink (follows paper theme), accent, blue, green, ochre; hex also works. Convention: dashed pencil for construction arcs and helper lines, fineliner or marker in ink for the figure, accent for the one thing being explained. pick_pen sets the default pen for later steps.
 
-LETTERING. There is no text tool. Write labels by hand with draw using strokes: one call per label, each letter one or two paths, cap height 28 units, letters 22 apart, placed 30 units outside the figure. Keep labels to a few characters: A, B, C, O, r, 90°. Prefer geometry that speaks for itself over long labels.
+GROUPS AND PASTE. Give related marks the same group name (e.g. "triangle ABC") so they can be moved, recolored, duplicated or erased together. Paste = edit with duplicate: true plus dx/dy, scale or rotate: the copies move, the originals stay.
 
-CONSTRUCTIONS. Segment AB: ruler A to B. Midpoint: compass at A and at B with the same radius (> half AB), ruler through the two intersections. Perpendicular at a point: compass at the point, then compass at both intersections, ruler through the crossings. Angle bisector: compass at vertex, then compass at both arm intersections, ruler through the crossing. Incircle: bisect two angles, compass at the crossing with radius = distance to a side (measure it). Use pencil for arcs, marker for the answer.
+YOUR OWN TOOLS. make kind brush: design a pen once (e.g. name inkwash: brush, width 14, opacity 0.35, texture chalk, taper) and use it anywhere as pen: { brush: "inkwash" }. make kind recipe: write a reusable construction as JSON steps with $params and expressions, e.g. params ["A","B"], steps [{"tool":"compass","center":"$A","radius":"hypot($B.x-$A.x,$B.y-$A.y)*0.6","label":"arc A"},{"tool":"compass","center":"$B","radius":"hypot($B.x-$A.x,$B.y-$A.y)*0.6","label":"arc B"}]. Then in construct: { tool: "recipe", name: "bisector-arcs", args: [{name:"A",x:300,y:400},{name:"B",x:700,y:400}] }. Build recipes for anything you will draw more than once: axes, arrows with labels, a shaded cell, a leaf. look.custom lists what you have made.
 
-GOOD HABITS. Label every mark meaningfully (e.g. "side AB", "arc from A") so it can be referred to and erased. Do not repeat marks. Say what you drew in one sentence after you draw. If a result comes back with an error, read it and fix the input instead of retrying identically.`;
+EFFECTS. Ink is still ink, but it has character: texture grain (dry, broken edge) or chalk (soft, dusty), taper (thin ends), fill hatch, crosshatch or stipple inside shapes and full circles (hatchAngle sets direction), highlighter for translucent emphasis. Interpret a request as an illustrator would: choose a pen with a mood, vary weight, shade with hatching, do not copy a stock diagram.
+
+LETTERING. No text tool. Write labels by hand with draw using strokes: one call per label, each letter one or two paths, cap height 28, letters 22 apart, 30 units outside the figure. Keep labels short: A, B, O, r, 90°.
+
+CONSTRUCTIONS (use measure between ids for exact points). Midpoint of AB: compass at A and at B, same radius > AB/2; measure between the two arcs; ruler through the two crossings. Perpendicular at P on a line: compass at P; measure crossings with the line; compass at both crossings; ruler through their crossings. Angle bisector: compass at the vertex; measure crossings with both arms; compass at each; ruler from vertex through the crossing. Incircle: bisect two angles; measure between the bisectors for the center; measure from the center to a side's foot for the radius; compass.
+
+HABITS. Label every mark meaningfully ("side AB", "arc from A"). Read errors and fix inputs; do not retry identically. After drawing, say in one sentence what is on the paper.`;
