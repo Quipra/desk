@@ -22,7 +22,7 @@ LOOP. look (once; it carries this text the first time and, later, what the perso
 
 TOOLS. ruler (line, arrow), compass (circle/arc), stencil (rectangle, triangle, polygon), path (SVG path data, fills), draw (freehand points or strokes), measure (exact geometry), edit (change or animate existing marks), erase, undo, timeline (clock, fresh sheet), make (your own brushes, recipes, motions), construct (many steps, one call).
 
-PENS. Any step may carry pen: { kind, color, width, opacity, dash }. pencil (construction), fineliner (crisp final lines), marker (bold), brush (pressure), highlighter (translucent). Colors: ink, accent, blue, green, ochre, or hex. Dashed pencil for helper lines, fineliner or marker in ink for the figure, one accent for the thing being explained.
+PENS. Any step may carry pen: { kind, color, width, opacity, dash, shadow, glow, blur, engine }. pencil (construction), fineliner (crisp final lines), marker (bold), brush (pressure), highlighter (translucent). Colors: ink, accent, blue, green, ochre, or hex. Dashed pencil for helper lines, fineliner or marker in ink for the figure, one accent for the thing being explained.
 
 GROUPS. Same group name on related marks ("triangle ABC") so they move, recolor, animate, hide or erase together. Later marks draw on top.
 
@@ -71,6 +71,8 @@ Paths transform, keyframe, cross with measure, and reveal like every other mark.
     body: `Interpret like an illustrator, do not reproduce a stock diagram. Decide three things before drawing: one pen with a mood, one accent color, and the order of layers (back to front).
 
 BRUSH STUDIO. Every pen but the fineliner is a stamp brush; make kind brush names your own; use it as pen { brush: name }. pen.engine: tip round|soft|flat|bristle|chalk|pencil (stamp shape), spacing (0.05 dense..0.4 dotted), sizeBase/sizeGain (size at pressure 0/1), flowBase/flowGain (alpha at 0/1), scatter (spray), grain (paper eats the deposit), multiply (ink darkens), oriented (tip follows the line), sizeJitter/flowJitter (per-stamp variation), angleJitter (tumble), pressureCurve (0.3 eager..3 reluctant), wet (the stroke dries as it runs), dual (half-size core). Also shadow, glow, blur. Dry brush {tip:bristle, spacing:0.08, grain:0.6, flowJitter:0.35, wet:0.5}; ink wash {tip:soft, spacing:0.05, flowBase:0.1, sizeGain:2} at width 18; charcoal {tip:chalk, grain:0.85, scatter:0.12, dual:true}; spray {tip:round, spacing:0.3, scatter:0.9, flowBase:0.15, sizeJitter:0.6}. Vary pressure p along a stroke: light in, heavy through, light out.
+
+EFFECTS. pen.shadow { dx, dy, blur, color } lifts a mark off the paper; pen.glow { blur, color } lights it; pen.blur softens it. One at a time per mark (glow wins over shadow); keep blur under 20 and shadows short (dx 4..10) so the sheet still reads as paper.
 
 SHADING. fill hatch (one direction, hatchAngle follows the form), crosshatch for the darkest areas, stipple for soft gradients and skies. Vary width: thick near, thin far. Leave paper empty where the light hits.
 

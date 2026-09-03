@@ -63,6 +63,7 @@ app.innerHTML = `
   <main class="stage" id="stage">
     <canvas id="paper" role="img" aria-label="Shared drawing sheet"></canvas>
     <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
+    <section class="sr-only" aria-label="For agents">Desk is one sheet shared by a person and an agent. Agents: the page registers WebMCP site tools. Call look first (it returns the core skill and an index), read a topic with guide { topic }, then draw with one construct call and verify: true. Never clear the sheet without asking.</section>
     <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
     <aside class="layers" id="layers" hidden aria-label="Layers"></aside>
     <aside class="inspector" id="inspector" hidden aria-label="Inspector"></aside>
