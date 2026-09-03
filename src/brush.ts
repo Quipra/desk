@@ -329,5 +329,19 @@ function grainMask(strength: number): HTMLCanvasElement | null {
   return c;
 }
 
+/** The brush definition for a pen: the kind's engine settings plus any overrides, including a full `engine` block. */
+export function brushFor(pen: Pen): BrushDef {
+  const base = pen.kind === "fineliner" ? BRUSHES.pencil : BRUSHES[pen.kind];
+  const def: BrushDef = { ...base };
+  if (pen.texture === "chalk") Object.assign(def, { tip: "chalk", grain: Math.max(def.grain, 0.7), spacing: 0.1, scatter: 0.05, multiply: true });
+  if (pen.texture === "grain") def.grain = Math.max(def.grain, 0.9);
+  if (pen.tip) def.tip = pen.tip;
+  if (pen.spacing !== undefined) def.spacing = pen.spacing;
+  if (pen.scatter !== undefined) def.scatter = pen.scatter;
+  if (pen.grain !== undefined) def.grain = pen.grain;
+  if (pen.engine) Object.assign(def, pen.engine);
+  return def;
+}
+
 /** Tips the engine knows, for custom brushes. */
 export const TIPS: Tip[] = ["round", "soft", "flat", "bristle", "chalk", "pencil"];
