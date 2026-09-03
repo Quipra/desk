@@ -26,6 +26,7 @@ app.innerHTML = `
     <canvas id="paper" role="img" aria-label="Shared drawing sheet"></canvas>
     <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
     <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
+    <aside class="layers" id="layers" hidden aria-label="Layers"></aside>
   </main>
   <section class="strip" id="strip" hidden aria-label="Timeline">
     <button type="button" class="tool" id="play" aria-label="Play or pause">play</button>
@@ -36,6 +37,7 @@ app.innerHTML = `
     </div>
     <button type="button" class="tool" id="loop" aria-pressed="true">loop</button>
     <button type="button" class="tool" id="onion" aria-pressed="false">onion</button>
+    <button type="button" class="tool" id="export" title="Record one loop as a WebM video">export</button>
   </section>
   <footer class="tray">
     <div class="tray-inner">
@@ -203,6 +205,99 @@ window.addEventListener("keydown", (e) => {
 scene.on((e) => {
   if (e.type === "motion" || e.type === "timeline" || e.type === "clear" || e.type === "remove") syncStrip();
 });
+
+// Export: record one loop of the animation from the canvas as WebM.
+const exportBtn = document.querySelector<HTMLButtonElement>("#export")!;
+exportBtn.addEventListener("click", async () => {
+  const stream = (canvas as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream }).captureStream?.(scene.timeline.fps > 30 ? 60 : 30);
+  if (!stream || typeof MediaRecorder === "undefined") {
+    addNotice("This browser can't record the canvas. Screen-record the sheet instead.", "alert");
+    return;
+  }
+  const mime = ["video/webm;codecs=vp9", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8_000_000 } : undefined);
+  const chunks: Blob[] = [];
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.onstop = () => {
+    const blob = new Blob(chunks, { type: "video/webm" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "desk.webm";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    exportBtn.disabled = false;
+    exportBtn.textContent = "export";
+  };
+  exportBtn.disabled = true;
+  exportBtn.textContent = "recording";
+  paper.pause();
+  paper.seek(0);
+  rec.start();
+  const wasLoop = scene.timeline.loop;
+  scene.setTimeline({ loop: false });
+  paper.play({ once: true });
+  const stop = () => {
+    scene.setTimeline({ loop: wasLoop });
+    rec.stop();
+  };
+  const check = () => (paper.playing ? setTimeout(check, 60) : setTimeout(stop, 200));
+  check();
+});
+
+// Layers panel: groups as layers, Figma-style, with visibility and z-order.
+const layersEl = document.querySelector<HTMLElement>("#layers")!;
+function syncLayers() {
+  const groups = new Map<string, { ids: string[]; hidden: boolean; moving: boolean }>();
+  for (const item of scene.items) {
+    const key = item.group ?? `· ${item.label}`;
+    const g = groups.get(key) ?? { ids: [], hidden: true, moving: false };
+    g.ids.push(item.id);
+    g.hidden = g.hidden && !!item.hidden;
+    g.moving = g.moving || !!item.motion;
+    groups.set(key, g);
+  }
+  layersEl.hidden = groups.size === 0;
+  const rows = [...groups].reverse().map(([name, g]) => {
+    const row = document.createElement("div");
+    row.className = "layer" + (g.hidden ? " off" : "");
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "eye";
+    eye.title = g.hidden ? "show" : "hide";
+    eye.setAttribute("aria-label", `${g.hidden ? "Show" : "Hide"} ${name}`);
+    eye.addEventListener("click", () => {
+      scene.update(g.ids.map((id) => {
+        const item = scene.get(id)!;
+        if (g.hidden) {
+          const { hidden: _h, ...rest } = item;
+          return rest as typeof item;
+        }
+        return { ...item, hidden: true };
+      }));
+      syncLayers();
+    });
+    const label = document.createElement("span");
+    label.className = "name";
+    label.textContent = name.startsWith("· ") ? name.slice(2) : name;
+    label.title = `${g.ids.length} mark${g.ids.length === 1 ? "" : "s"}${g.moving ? ", animated" : ""}`;
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `${g.moving ? "◆ " : ""}${g.ids.length}`;
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "order";
+    up.textContent = "↑";
+    up.title = "bring to front";
+    up.addEventListener("click", () => scene.reorder(g.ids, "front"));
+    row.append(eye, label, meta, up);
+    return row;
+  });
+  const title = document.createElement("div");
+  title.className = "layers-title";
+  title.textContent = "layers";
+  layersEl.replaceChildren(title, ...rows);
+}
+scene.on(() => syncLayers());
 
 // Pointer readout in paper units, useful when talking to the agent about positions.
 const cursorEl = document.querySelector<HTMLElement>("#cursor")!;

@@ -1,7 +1,8 @@
 // How an agent sees the paper. Tool results are text, so "looking" returns a
 // labeled inventory of every mark plus a coarse character raster of the sheet.
 
-import { arcPoints, bbox, PAPER_H, PAPER_W, shapeVertices, type BBox, type Item, type Pt, type Scene } from "./scene.ts";
+import { arcPoints, bbox, PAPER_H, PAPER_W, pathPoints, shapeVertices, type BBox, type Item, type Pt, type Scene } from "./scene.ts";
+import { isClosed, toData } from "./svgpath.ts";
 
 const CELL = 25; // paper units per raster cell
 const COLS = PAPER_W / CELL; // 48
@@ -49,6 +50,8 @@ function summarize(item: Item): ItemSummary {
     id: item.id,
     label: item.label,
     ...(item.group ? { group: item.group } : {}),
+    ...(item.hidden ? { hidden: true } : {}),
+    ...(item.motion ? { motion: { keys: item.motion.keys.length, wiggle: !!item.motion.wiggle, boil: !!item.motion.boil } } : {}),
     author: item.author,
     kind: item.kind,
     pen: `${item.pen.kind} ${item.pen.color} w${item.pen.width}${item.pen.dash ? " dashed" : ""}`,
@@ -71,11 +74,14 @@ function detailOf(item: Item): string {
       return `center (${r(item.cx)},${r(item.cy)}) radius ${r(item.r)} from ${r(item.start)}° to ${r(item.end)}°`;
     case "shape":
       return `${item.shape}${item.shape === "polygon" ? ` ${item.sides} sides` : ""} center (${r(item.x)},${r(item.y)}) ${r(item.w)}x${r(item.h)} rotation ${r(item.rotation)}°`;
+    case "path":
+      return `${isClosed(item.segments) ? "closed" : "open"} path, ${item.segments.length} segments: ${toData(item.segments).slice(0, 160)}`;
   }
 }
 
 function geometryOf(item: Item) {
-  const { id: _id, label: _label, author: _author, pen: _pen, group: _group, ...geometry } = item;
+  const { id: _id, label: _label, author: _author, pen: _pen, group: _group, motion: _motion, hidden: _hidden, ...geometry } = item;
+  if (geometry.kind === "path") return { kind: "path", d: toData(geometry.segments) };
   if (geometry.kind !== "stroke") return geometry;
   // Bounded detail preserves endpoints and pen lifts without returning tens of
   // thousands of smoothed points to the model for each word.
@@ -135,5 +141,7 @@ function polylines(item: Item): Pt[][] {
       const v = shapeVertices(item);
       return [[...v, v[0]]];
     }
+    case "path":
+      return pathPoints(item);
   }
 }

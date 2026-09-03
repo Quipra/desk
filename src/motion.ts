@@ -153,6 +153,26 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+/**
+ * Built-in motions, the way an animate menu offers them. Times are relative to
+ * where the preset is applied; the agent can make its own with `make`.
+ */
+export const LIBRARY: Record<string, { motion: Motion; description: string }> = {
+  rise: { description: "fade up from 40 below", motion: { keys: [{ at: 0, dy: 40, opacity: 0 }, { at: 0.5, dy: 0, opacity: 1, ease: "easeOut" }] } },
+  drop: { description: "fall in from above and settle", motion: { keys: [{ at: 0, dy: -60, opacity: 0 }, { at: 0.6, dy: 0, opacity: 1, ease: "bounce" }] } },
+  pop: { description: "scale up with overshoot", motion: { keys: [{ at: 0, scale: 0, opacity: 0 }, { at: 0.35, scale: 1.12, opacity: 1, ease: "easeOut" }, { at: 0.5, scale: 1 }] } },
+  fade: { description: "fade in", motion: { keys: [{ at: 0, opacity: 0 }, { at: 0.5, opacity: 1, ease: "ease" }] } },
+  wipe: { description: "write on, as if drawn", motion: { keys: [{ at: 0, reveal: 0 }, { at: 0.8, reveal: 1, ease: "linear" }] } },
+  typewriter: { description: "fast write-on, for lettering with stagger", motion: { keys: [{ at: 0, reveal: 0, opacity: 1 }, { at: 0.25, reveal: 1, ease: "linear" }] } },
+  breathe: { description: "slow scale pulse", motion: { keys: [{ at: 0, scale: 1 }, { at: 1, scale: 1.06, ease: "easeInOut" }, { at: 2, scale: 1, ease: "easeInOut" }] } },
+  spin: { description: "one full turn", motion: { keys: [{ at: 0, rotate: 0 }, { at: 1, rotate: 360, ease: "easeInOut" }] } },
+  shake: { description: "quick side-to-side", motion: { keys: [{ at: 0, dx: 0 }, { at: 0.08, dx: -8, ease: "linear" }, { at: 0.16, dx: 8, ease: "linear" }, { at: 0.24, dx: -5, ease: "linear" }, { at: 0.32, dx: 0, ease: "linear" }] } },
+  drift: { description: "gentle floating wiggle", motion: { keys: [], wiggle: { amp: 6, freq: 0.6 } } },
+  sketchy: { description: "line boil, hand-drawn shimmer", motion: { keys: [], boil: 8 } },
+  fadeOut: { description: "fade away", motion: { keys: [{ at: 0, opacity: 1 }, { at: 0.5, opacity: 0, ease: "ease" }] } },
+  sink: { description: "drop and fade out", motion: { keys: [{ at: 0, dy: 0, opacity: 1 }, { at: 0.5, dy: 40, opacity: 0, ease: "easeIn" }] } },
+};
+
 /** Keyframe times across a set of marks, for the scrubber. */
 export function keyTimes(items: Item[]): number[] {
   const out = new Set<number>();

@@ -1,7 +1,8 @@
 // Exact geometry for the measure tool: where marks cross, and what a mark is.
 // Constructions stop being guesswork when the agent can ask instead of squint.
 
-import { arcPoints, shapeVertices, type Item, type Pt } from "./scene.ts";
+import { arcPoints, pathPoints, shapeVertices, type Item, type Pt } from "./scene.ts";
+import { isClosed, toData } from "./svgpath.ts";
 
 const EPS = 1e-9;
 
@@ -49,6 +50,13 @@ export function properties(item: Item) {
       const vertices = shapeVertices(item).map((p) => ({ x: round(p.x), y: round(p.y) }));
       return { kind: item.shape, center: { x: round(item.x), y: round(item.y) }, width: round(item.w), height: round(item.h), rotation: item.rotation, vertices };
     }
+    case "path": {
+      const pts = pathPoints(item);
+      let length = 0;
+      for (const path of pts) for (let i = 1; i < path.length; i++) length += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+      const first = pts[0]?.[0];
+      return { kind: "path", closed: isClosed(item.segments), d: toData(item.segments), segments: item.segments.length, length: round(length), start: first ? { x: round(first.x), y: round(first.y) } : null };
+    }
     case "stroke": {
       const all = item.paths.flat();
       const first = all[0];
@@ -74,6 +82,8 @@ function segmentsOf(item: Item): Segment[] {
     }
     case "stroke":
       return item.paths.flatMap((path) => path.slice(1).map((p, i) => [path[i], p] as Segment));
+    case "path":
+      return pathPoints(item).flatMap((path) => path.slice(1).map((p, i) => [path[i], p] as Segment));
     case "arc": {
       const pts = arcPoints(item, 96);
       return pts.slice(1).map((p, i) => [pts[i], p] as Segment);

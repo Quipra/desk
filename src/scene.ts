@@ -1,6 +1,8 @@
 // The scene is the single source of truth for what is on the paper.
 // Humans and agents both write to it through the same instruments.
 
+import { flatten, type Segment } from "./svgpath.ts";
+
 export const PAPER_W = 1200;
 export const PAPER_H = 800;
 
@@ -30,6 +32,8 @@ export interface Pen {
   fill?: Fill;
   /** Hatch direction in degrees, default 45. */
   hatchAngle?: number;
+  /** Solid fill for closed paths, shapes and circles: a color, or "auto" for theme ink. */
+  fillColor?: string;
 }
 
 export interface Pt {
@@ -48,6 +52,8 @@ interface Base {
   group?: string;
   /** Keyframes and procedural motion, when the mark moves over the timeline. */
   motion?: import("./motion.ts").Motion;
+  /** Hidden marks stay in the scene (and in look) but are not drawn. */
+  hidden?: boolean;
 }
 
 export interface Timeline {
@@ -63,7 +69,8 @@ export type Geometry =
   | { kind: "stroke"; paths: Pt[][] }
   | { kind: "line"; from: Pt; to: Pt; arrow: boolean }
   | { kind: "arc"; cx: number; cy: number; r: number; start: number; end: number }
-  | { kind: "shape"; shape: StencilShape; x: number; y: number; w: number; h: number; rotation: number; sides: number };
+  | { kind: "shape"; shape: StencilShape; x: number; y: number; w: number; h: number; rotation: number; sides: number }
+  | { kind: "path"; segments: Segment[] };
 
 export type Item = Base & Geometry;
 
@@ -167,6 +174,17 @@ export class Scene {
     return ids;
   }
 
+  /** Bring marks to the front or send them to the back of the drawing order. */
+  reorder(ids: string[], where: "front" | "back"): string[] {
+    const set = new Set(ids);
+    const picked = this.items.filter((i) => set.has(i.id));
+    if (picked.length === 0) return [];
+    const rest = this.items.filter((i) => !set.has(i.id));
+    this.items = where === "front" ? [...rest, ...picked] : [...picked, ...rest];
+    this.emit({ type: "change", ids: picked.map((i) => i.id) });
+    return picked.map((i) => i.id);
+  }
+
   remove(ids: string[]): string[] {
     const set = new Set(ids);
     const removed = this.items.filter((i) => set.has(i.id)).map((i) => i.id);
@@ -245,10 +263,17 @@ export function arcPoints(a: Extract<Geometry, { kind: "arc" }>, steps = 48): Pt
   return pts;
 }
 
+/** Flattened polylines of a path mark, one per subpath. */
+export function pathPoints(item: Extract<Geometry, { kind: "path" }>): Pt[][] {
+  return flatten(item.segments);
+}
+
 export function bbox(item: Item): BBox {
   switch (item.kind) {
     case "stroke":
       return ptsBox(item.paths.flat(), item.pen.width);
+    case "path":
+      return ptsBox(pathPoints(item).flat(), item.pen.width);
     case "line":
       return ptsBox([item.from, item.to], item.pen.width);
     case "arc":
@@ -313,6 +338,24 @@ export function transformItem(item: Item, t: Transform): Item {
   switch (item.kind) {
     case "stroke":
       return { ...item, paths: item.paths.map((path) => path.map(map)) };
+    case "path":
+      return {
+        ...item,
+        segments: item.segments.map((seg) => {
+          if (seg.c === "Z") return seg;
+          const p = map({ x: seg.x, y: seg.y });
+          if (seg.c === "C") {
+            const a = map({ x: seg.x1, y: seg.y1 });
+            const b = map({ x: seg.x2, y: seg.y2 });
+            return { ...seg, x1: a.x, y1: a.y, x2: b.x, y2: b.y, x: p.x, y: p.y };
+          }
+          if (seg.c === "Q") {
+            const a = map({ x: seg.x1, y: seg.y1 });
+            return { ...seg, x1: a.x, y1: a.y, x: p.x, y: p.y };
+          }
+          return { ...seg, x: p.x, y: p.y };
+        }),
+      };
     case "line":
       return { ...item, from: map(item.from), to: map(item.to) };
     case "arc": {

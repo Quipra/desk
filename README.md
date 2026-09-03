@@ -26,7 +26,7 @@ Prompts that show it off:
 
 ## Instruments
 
-Fourteen tools registered with `document.modelContext.registerTool` (with a `navigator.modelContext` fallback). All of them write to the same scene the person's pointer writes to.
+Fifteen tools registered with `document.modelContext.registerTool` (with a `navigator.modelContext` fallback). All of them write to the same scene the person's pointer writes to.
 
 | Tool | On the desk |
 |---|---|
@@ -38,14 +38,17 @@ Fourteen tools registered with `document.modelContext.registerTool` (with a `nav
 | `ruler` | Straight line, optional arrowhead |
 | `compass` | Circle or arc from a center and radius |
 | `stencil` | Rectangle, triangle, or regular polygon |
-| `edit` | Change existing marks without redrawing: restyle, move, scale, rotate, relabel, regroup, duplicate (paste) |
+| `path` | The pen tool: a vector from SVG path data, with optional solid fill |
+| `edit` | Change existing marks without redrawing: restyle, move, scale, rotate, relabel, regroup, duplicate (paste), hide, reorder, and with `at`, keyframe |
 | `erase` | By ids, group, or region |
 | `undo` | Lift the agent's last mark |
 | `timeline` | The sheet's clock: play, pause, seek, duration, fps, loop, onion skin, or a fresh sheet |
 | `make` | The agent's own tools: a brush it designs, a recipe of construct steps with `$params` and expressions, or a motion preset it can apply anywhere |
 | `construct` | Up to 40 instrument steps in one call, including recipes. `verify: true` returns the sheet in the same result |
 
-**Animation.** A keyframe is an edit at a time: `edit { group: "ball", at: 1.5, dx: 300, ease: "easeOut" }`. Keyable: position, scale, rotation, opacity, and reveal (write-on). Curves: linear, ease, easeIn, easeOut, easeInOut, bounce, or a cubic bezier. Wiggle adds smooth drift; boil re-noises edges like hand-drawn animation. The agent can name a motion preset with `make` and apply it to any marks. Playback starts when keys are added; a scrubber with keyframe ticks, loop, and onion skin appears under the paper. `look { at }` reports where every mark is at a time.
+**Animation.** A keyframe is an edit at a time: `edit { group: "ball", at: 1.5, dx: 300, ease: "easeOut" }`. Keyable: position, scale, rotation, opacity, and reveal (write-on). Curves: linear, ease, easeIn, easeOut, easeInOut, bounce, or a cubic bezier. Wiggle adds smooth drift; boil re-noises edges like hand-drawn animation. A built-in library (rise, drop, pop, fade, wipe, typewriter, breathe, spin, shake, drift, sketchy, fadeOut, sink) applies with `preset`, with `stagger` for cascades, and the agent can name its own with `make`. Playback starts when keys are added; a scrubber with keyframe ticks, loop, and onion skin appears under the paper. `look { at }` reports where every mark is at a time. The **export** button records one loop as WebM.
+
+**Vectors and layers.** `path` takes SVG path data and makes a real vector mark that fills, transforms, animates and crosses like everything else. Groups are layers: a panel on the right lists them with visibility and z-order, and `edit` can hide, show, and reorder.
 
 Five pens: pencil, fineliner, marker, brush, highlighter. Every pen can be dashed, tapered, textured (grain or chalk), and can fill closed shapes and circles with hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
 
@@ -82,10 +85,11 @@ await desk.call("construct", { verify: true, steps: [
 - `src/scene.ts` — the shared scene: items, authors, pens, bounding boxes
 - `src/paper.ts` — canvas rendering, ribbon strokes, reveal animation, glow, replay
 - `src/instruments.ts` — the person's pointer gestures
-- `src/webmcp.ts` — the agent's fourteen tools, validation and lifecycle
+- `src/webmcp.ts` — the agent's fifteen tools, validation and lifecycle
 - `src/geometry.ts` — exact intersections and mark properties for `measure`
 - `src/recipes.ts` — the expression evaluator behind agent-made recipes
-- `src/motion.ts` — keyframes, easing, wiggle: where a mark is at a time
+- `src/motion.ts` — keyframes, easing, wiggle, the motion library: where a mark is at a time
+- `src/svgpath.ts` — the pen tool's SVG path parser
 - `src/guide.ts` — what the `guide` tool returns
 - `src/look.ts` — how the agent sees the sheet
 - `src/appearance.ts` — theme palette shared by DOM and canvas

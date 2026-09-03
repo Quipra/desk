@@ -10,7 +10,8 @@ import { GUIDE } from "./guide.ts";
 import { intersections, properties } from "./geometry.ts";
 import { describe } from "./look.ts";
 import { substitute, type ParamValue } from "./recipes.ts";
-import { EASES, keyTimes, poseAt, type Keyframe, type Motion } from "./motion.ts";
+import { EASES, LIBRARY, keyTimes, poseAt, type Keyframe, type Motion } from "./motion.ts";
+import { parsePath } from "./svgpath.ts";
 import { THEMES } from "./appearance.ts";
 import { smooth, type Paper } from "./paper.ts";
 import {
@@ -94,7 +95,7 @@ const penKinds = Object.keys(PEN_PRESETS);
 const pen = {
   type: "object",
   description:
-    "Pen for this mark: kind, or brush (a name you made with make), color by name (ink, accent, blue, green, ochre) or hex, width 1..24, opacity 0.05..1, dash for construction lines, texture grain|chalk, taper for thin ends, fill hatch|crosshatch|stipple for closed shapes and circles, hatchAngle.",
+    "Pen for this mark: kind, or brush (a name you made with make), color by name (ink, accent, blue, green, ochre) or hex, width 1..24, opacity 0.05..1, dash for construction lines, texture grain|chalk, taper for thin ends, fill hatch|crosshatch|stipple and/or fillColor (solid) for closed paths, shapes and circles, hatchAngle.",
   properties: {
     kind: { type: "string", enum: penKinds },
     brush: { type: "string", description: "name of a brush made with make" },
@@ -106,6 +107,7 @@ const pen = {
     taper: { type: "boolean" },
     fill: { type: "string", enum: ["hatch", "crosshatch", "stipple", "none"] },
     hatchAngle: { type: "number" },
+    fillColor: { type: "string", description: "solid fill for closed paths, shapes and circles: palette name, hex, auto, or none" },
   },
   additionalProperties: false,
 };
@@ -131,6 +133,11 @@ const keyframeFields = {
   boil: { type: "number", description: "line boil: re-noise textured edges this many times per second, 0 to stop" },
   preset: { type: "string", description: "a motion you made with make, applied starting at 'at'" },
   clearMotion: { type: "boolean", description: "remove all keyframes and motion from the selected marks" },
+  stagger: { type: "number", description: "seconds between each selected mark's start, in scene order, for cascades" },
+};
+const layerFields = {
+  hidden: { type: "boolean", description: "hide or show the selected marks (they stay in the scene)" },
+  order: { type: "string", enum: ["front", "back"], description: "bring to front or send to back of the drawing order" },
 };
 const timelineFields = {
   action: { type: "string", enum: ["play", "pause", "seek", "set", "clear"] },
@@ -280,11 +287,33 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       );
       return { id: item.id, label: item.label, bbox: box(item) };
     },
+    path(i: Record<string, unknown>) {
+      const d = requiredText(i.d, "d", 20000);
+      const segments = parsePath(d);
+      const item = scene.add({ kind: "path", segments }, meta(i, "path"));
+      return { id: item.id, label: item.label, segments: segments.length, bbox: box(item) };
+    },
     edit(i: Record<string, unknown>) {
       const targets = select(i);
       if (targets.length === 0) return { edited: [], note: "nothing matched" };
       const animating = i.at !== undefined || i.preset !== undefined || i.wiggle !== undefined || i.boil !== undefined || i.clearMotion === true;
       if (animating) return animate(targets, i);
+      if (i.hidden !== undefined || i.order !== undefined) {
+        const out: Record<string, unknown> = { edited: targets.map((t) => t.id) };
+        if (i.hidden !== undefined) {
+          if (typeof i.hidden !== "boolean") throw new Error("hidden must be true or false");
+          scene.update(targets.map((t) => (i.hidden ? { ...t, hidden: true } : (({ hidden: _h, ...rest }) => rest as Item)(t))));
+          out.hidden = i.hidden;
+        }
+        if (i.order !== undefined) {
+          const where = requiredText(i.order, "order");
+          if (where !== "front" && where !== "back") throw new Error("order must be front or back");
+          scene.reorder(targets.map((t) => t.id), where);
+          out.order = where;
+        }
+        const more = ["pen", "dx", "dy", "scale", "rotate", "label", "regroup", "duplicate"].some((k) => i[k] !== undefined);
+        if (!more) return out;
+      }
       const t = {
         dx: i.dx === undefined ? undefined : ranged(i.dx, "dx", -PAPER_W, PAPER_W),
         dy: i.dy === undefined ? undefined : ranged(i.dy, "dy", -PAPER_H, PAPER_H),
@@ -394,7 +423,9 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
   /** Keyframes, presets, wiggle and boil on selected marks. */
   function animate(targets: Item[], i: Record<string, unknown>) {
     let maxAt = 0;
-    const next = targets.map((item) => {
+    const stagger = i.stagger === undefined ? 0 : ranged(i.stagger, "stagger", 0, 60);
+    const next = targets.map((item, index) => {
+      const shift = stagger * index;
       if (i.clearMotion === true) {
         const { motion: _m, ...rest } = item;
         return rest as Item;
@@ -402,14 +433,15 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       const motion: Motion = { keys: [...(item.motion?.keys ?? [])], wiggle: item.motion?.wiggle, boil: item.motion?.boil };
       if (i.preset !== undefined) {
         const name = requiredText(i.preset, "preset", 64);
-        const made = motions.get(name);
-        if (!made) throw new Error(`no motion named ${name}; make it first or check look.custom`);
-        const offset = i.at === undefined ? 0 : ranged(i.at, "at", 0, MAX_TIME);
+        const made = motions.get(name) ?? LIBRARY[name];
+        if (!made) throw new Error(`no motion named ${name}; library: ${Object.keys(LIBRARY).join(", ")}; or make one`);
+        const offset = (i.at === undefined ? 0 : ranged(i.at, "at", 0, MAX_TIME)) + shift;
         for (const k of made.motion.keys) upsertKey(motion.keys, { ...k, at: k.at + offset });
         if (made.motion.wiggle) motion.wiggle = made.motion.wiggle;
         if (made.motion.boil) motion.boil = made.motion.boil;
       } else if (i.at !== undefined) {
-        upsertKey(motion.keys, readKeyframe(i));
+        const key = readKeyframe(i);
+        upsertKey(motion.keys, { ...key, at: key.at + shift });
       }
       if (i.wiggle !== undefined) motion.wiggle = readWiggle(i.wiggle);
       if (i.boil !== undefined) {
@@ -431,7 +463,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
   }
 
   function timelineState() {
-    return { ...scene.timeline, time: Math.round(paper.time * 100) / 100, playing: paper.playing, animated: scene.animated, keyTimes: keyTimes(scene.items) };
+    return { ...scene.timeline, time: Math.round(paper.time * 100) / 100, playing: paper.playing, animated: scene.animated, keyTimes: keyTimes(scene.items), presets: Object.keys(LIBRARY) };
   }
 
   function readKeyframe(i: Record<string, unknown>): Keyframe {
@@ -624,10 +656,17 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       execute: wrap(act.stencil),
     },
     {
+      name: "path",
+      annotations: { readOnlyHint: false },
+      description: "The pen tool: a vector path from SVG path data (M L H V C S Q T Z, absolute or relative) in paper units, e.g. 'M 300 400 C 350 300 450 300 500 400 Z'. Give the pen a fillColor for a solid shape. Paths transform, animate, and cross like every other mark.",
+      inputSchema: { type: "object", properties: { d: { type: "string" }, label, group, pen }, required: ["d", "label"], additionalProperties: false },
+      execute: wrap(act.path),
+    },
+    {
       name: "edit",
       annotations: { readOnlyHint: false },
       description:
-        "Change existing marks without redrawing, or animate them. Select by ids, group and/or region, then any of: pen (restyle), dx/dy (move), scale (about a point, default the mark's center), rotate (degrees clockwise), label, regroup, duplicate (edit copies, keep originals). With at (seconds) the same fields become a KEYFRAME instead: the mark tweens there from its previous key with ease or bezier; opacity and reveal (write-on) are keyable too. wiggle adds smooth random drift, boil re-noises the edge like hand-drawn animation, preset applies a motion you made. Playback starts automatically.",
+        "Change existing marks without redrawing, or animate them. Select by ids, group and/or region, then any of: pen (restyle), dx/dy (move), scale (about a point, default the mark's center), rotate (degrees clockwise), label, regroup, duplicate (edit copies, keep originals). With at (seconds) the same fields become a KEYFRAME instead: the mark tweens there from its previous key with ease or bezier; opacity and reveal (write-on) are keyable too. wiggle adds smooth random drift, boil re-noises the edge like hand-drawn animation, preset applies a built-in motion (rise, drop, pop, fade, wipe, typewriter, breathe, spin, shake, drift, sketchy, fadeOut, sink) or one you made, stagger cascades a group. hidden and order manage layers. Playback starts automatically.",
       inputSchema: {
         type: "object",
         properties: {
@@ -643,6 +682,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
           label,
           regroup: { type: "string", description: "new group name for the selected marks" },
           duplicate: { type: "boolean" },
+          ...layerFields,
           ...keyframeFields,
         },
         additionalProperties: false,
@@ -747,7 +787,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     {
       name: "construct",
       annotations: { readOnlyHint: false },
-      description: `The main way to draw: up to ${MAX_STEPS} instrument steps in one call, in order. Each step names its tool (pick_pen, draw, ruler, compass, stencil, edit, erase, undo, timeline, or recipe with name and args) and carries that tool's fields, plus an optional inline pen and group. verify: true appends a look to the result so you can check the figure without another call. Stops at the first invalid step and reports what was done.`,
+      description: `The main way to draw: up to ${MAX_STEPS} instrument steps in one call, in order. Each step names its tool (pick_pen, draw, ruler, compass, stencil, path, edit, erase, undo, timeline, or recipe with name and args) and carries that tool's fields, plus an optional inline pen and group. verify: true appends a look to the result so you can check the figure without another call. Stops at the first invalid step and reports what was done.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -791,6 +831,8 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
                 duplicate: { type: "boolean" },
                 name: { type: "string", description: "recipe name" },
                 args: recipeArgs,
+                d: { type: "string", description: "path: SVG path data" },
+                ...layerFields,
                 ...keyframeFields,
                 ...timelineFields,
               },
@@ -954,7 +996,11 @@ function resolvePenWith(base: Pen, input: unknown, brushes: Map<string, { pen: P
     next.fill = f === "none" ? undefined : (f as Pen["fill"]);
   }
   if (i.hatchAngle !== undefined) next.hatchAngle = ranged(i.hatchAngle, "hatchAngle", -180, 180);
-  for (const key of ["dash", "taper", "texture", "fill", "hatchAngle", "brush"] as const) if (next[key] === undefined || next[key] === false) delete next[key];
+  if (i.fillColor !== undefined) {
+    const f = requiredText(i.fillColor, "fillColor", 64);
+    next.fillColor = f === "none" ? undefined : cssColor(f);
+  }
+  for (const key of ["dash", "taper", "texture", "fill", "hatchAngle", "brush", "fillColor"] as const) if (next[key] === undefined || next[key] === false) delete next[key];
   return next;
 }
 

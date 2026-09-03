@@ -7,7 +7,7 @@
 // glowing. Reveal durations share a time budget per batch, so a whole
 // construct call lands in about two seconds no matter how many marks it has.
 
-import { bbox, clampPt, PAPER_H, PAPER_W, shapeVertices, transformItem, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
+import { bbox, clampPt, PAPER_H, PAPER_W, pathPoints, shapeVertices, transformItem, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
 import { inkColor, THEMES, type Theme } from "./appearance.ts";
 import { poseAt, type Pose } from "./motion.ts";
 
@@ -323,6 +323,10 @@ export class Paper {
     ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
     this.driedIds.clear();
     for (const item of this.scene.items) {
+      if (item.hidden) {
+        this.driedIds.add(item.id);
+        continue;
+      }
       if (this.isLive(item.id)) continue;
       this.drawItem(ctx, item, 1);
       this.driedIds.add(item.id);
@@ -350,6 +354,7 @@ export class Paper {
     const { onion, fps } = this.scene.timeline;
     const showOnion = onion && !this.playing && this.scene.animated && this.time > 0;
     for (const item of this.scene.items) {
+      if (item.hidden) continue;
       if (this.dried && this.driedIds.has(item.id)) continue;
       const t = this.progress.get(item.id) ?? 1;
       if (t <= 0) continue;
@@ -495,15 +500,32 @@ export class Paper {
         ctx.beginPath();
         ctx.arc(item.cx, item.cy, item.r, (item.start * Math.PI) / 180, (end * Math.PI) / 180, item.end < item.start);
         ctx.stroke();
-        if (pen.fill && t >= 1 && !opts && Math.abs(item.end - item.start) >= 360) {
-          ctx.beginPath();
-          ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2);
-          this.drawFill(ctx, item, pen, { x: item.cx - item.r, y: item.cy - item.r, w: item.r * 2, h: item.r * 2 });
+        if (t >= 1 && !opts && Math.abs(item.end - item.start) >= 360) {
+          if (pen.fillColor) {
+            ctx.beginPath();
+            ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2);
+            this.solidFill(ctx, pen);
+            ctx.beginPath();
+            ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          if (pen.fill) {
+            ctx.beginPath();
+            ctx.arc(item.cx, item.cy, item.r, 0, Math.PI * 2);
+            this.drawFill(ctx, item, pen, { x: item.cx - item.r, y: item.cy - item.r, w: item.r * 2, h: item.r * 2 });
+          }
         }
         break;
       }
       case "shape": {
         const verts = shapeVertices(item);
+        if (pen.fillColor && t >= 1 && !opts) {
+          ctx.beginPath();
+          ctx.moveTo(verts[0].x, verts[0].y);
+          for (const v of verts.slice(1)) ctx.lineTo(v.x, v.y);
+          ctx.closePath();
+          this.solidFill(ctx, pen);
+        }
         drawPartialPolygon(ctx, verts, t);
         if (pen.fill && t >= 1 && !opts) {
           ctx.beginPath();
@@ -514,7 +536,41 @@ export class Paper {
         }
         break;
       }
+      case "path": {
+        if (t >= 1) {
+          ctx.beginPath();
+          for (const seg of item.segments) {
+            if (seg.c === "M") ctx.moveTo(seg.x, seg.y);
+            else if (seg.c === "L") ctx.lineTo(seg.x, seg.y);
+            else if (seg.c === "C") ctx.bezierCurveTo(seg.x1, seg.y1, seg.x2, seg.y2, seg.x, seg.y);
+            else if (seg.c === "Q") ctx.quadraticCurveTo(seg.x1, seg.y1, seg.x, seg.y);
+            else ctx.closePath();
+          }
+          if (pen.fillColor && !opts) this.solidFill(ctx, pen);
+          ctx.stroke();
+          if (pen.fill && !opts) this.drawFill(ctx, item, pen, bbox(item));
+        } else {
+          // Revealing: the pen travels the flattened path, subpath by subpath.
+          for (const { points, progress } of pathProgress(pathPoints(item), t)) {
+            const pts = revealed(points, progress);
+            if (pts.length < 2) continue;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            ctx.stroke();
+          }
+        }
+        break;
+      }
     }
+    ctx.restore();
+  }
+
+  /** Fill the current path with the pen's solid fill, keeping the stroke's alpha. */
+  private solidFill(ctx: CanvasRenderingContext2D, pen: Pen) {
+    ctx.save();
+    ctx.fillStyle = inkColor(pen.fillColor === "auto" ? "auto" : pen.fillColor!, this._theme);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -739,6 +795,8 @@ function inkLength(item: Item): number {
   switch (item.kind) {
     case "stroke":
       return item.paths.reduce((s, points) => s + pathLength(points), 0);
+    case "path":
+      return pathPoints(item).reduce((s, points) => s + pathLength(points), 0);
     case "line":
       return dist(item.from, item.to);
     case "arc":
@@ -755,8 +813,9 @@ function inkLength(item: Item): number {
 /** Where the pen tip is while an item is being revealed. */
 function tipAt(item: Item, t: number): Pt | null {
   switch (item.kind) {
+    case "path":
     case "stroke": {
-      const visible = pathProgress(item.paths, t).filter((path) => path.progress > 0);
+      const visible = pathProgress(item.kind === "path" ? pathPoints(item) : item.paths, t).filter((path) => path.progress > 0);
       const current = visible.at(-1);
       return current ? revealed(current.points, current.progress).at(-1) ?? null : null;
     }
