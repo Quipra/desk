@@ -4,7 +4,7 @@
 import type { Paper } from "./paper.ts";
 import { bbox, clampPt, PEN_PRESETS, type Item, type Pen, type PenKind, type Pt, type Scene, type StencilShape } from "./scene.ts";
 
-export type Mode = "pen" | "eraser" | "ruler" | "compass" | "stencil";
+export type Mode = "hand" | "pen" | "eraser" | "ruler" | "compass" | "stencil";
 
 const ERASE_RADIUS = 14;
 
@@ -53,6 +53,16 @@ export class Instruments {
     this.onChange?.();
   }
 
+  setWidth(width: number) {
+    this.pen = { ...this.pen, width };
+    this.onChange?.();
+  }
+
+  setDash(dash: boolean) {
+    this.pen = { ...this.pen, dash: dash || undefined };
+    this.onChange?.();
+  }
+
   private pt(e: PointerEvent): Pt {
     const p = this.paper.toPaper(e);
     const pressure = e.pointerType === "mouse" ? 0.5 : e.pressure || 0.5;
@@ -60,7 +70,7 @@ export class Instruments {
   }
 
   private start(e: PointerEvent) {
-    if (e.button !== 0 || this.pointerId !== null || e.isPrimary === false) return;
+    if (e.button !== 0 || this.pointerId !== null || e.isPrimary === false || this.mode === "hand") return;
     const p = this.pt(e);
     e.preventDefault();
     this.pointerId = e.pointerId;

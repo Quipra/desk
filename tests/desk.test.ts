@@ -647,6 +647,7 @@ function paperHarness() {
     strokeText: noop,
     fillText: noop,
     clip: noop,
+    rect: noop,
     setLineDash: noop,
     drawImage: noop,
     clearRect: noop,

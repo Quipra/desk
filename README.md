@@ -58,6 +58,10 @@ Tool schemas stay inside the JSON Schema subset chat hosts accept for tool defin
 
 Agent marks reveal progressively with a glow, then settle into plain ink. The **replay** button redraws the whole sheet in order. Charcoal is the default theme with a light-paper toggle; `color: "auto"` follows the theme.
 
+## For the person at the desk
+
+A FigJam-style tray: hand, pen, eraser, ruler, compass, stencil, undo, replay, paper. The row above it holds the active tool's options: five pen kinds, three widths, dash, five inks and a custom color; stencil shapes; paper types. Pinch or ⌘-wheel to zoom, wheel or hand to pan, ⌘0 to fit. The DESK mark opens a menu: new sheet, save (⌘S) to a library kept in the browser, export PNG, SVG, or one loop of the animation as WebM.
+
 ## Run locally
 
 ```sh
@@ -93,7 +97,10 @@ await desk.call("construct", { verify: true, steps: [
 - `src/guide.ts` — what the `guide` tool returns
 - `src/look.ts` — how the agent sees the sheet
 - `src/appearance.ts` — theme palette shared by DOM and canvas
-- `src/main.ts` — the tray and status UI
+- `src/main.ts` — the tray, pickers, menu, zoom, strip and layers UI
+- `src/export.ts` — PNG, SVG and WebM exporters
+- `src/library.ts` — saved sheets in the browser
+- `src/icons.ts` — the tray's line icons
 - `SKILL.md` — a short skill for coding agents that build on Desk
 
 MIT.

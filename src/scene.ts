@@ -212,6 +212,19 @@ export class Scene {
     this.emit({ type: "clear" });
   }
 
+  /** Replace everything with a saved sheet. */
+  load(doc: { items: Item[]; paper?: PaperKind; timeline?: Partial<Timeline> }) {
+    this.items = doc.items.map((i) => ({ ...i }));
+    if (doc.paper) this.paper = doc.paper;
+    this.timeline = { ...this.timeline, ...(doc.timeline ?? {}) };
+    let max = 0;
+    for (const i of this.items) max = Math.max(max, Number(i.id.replace(/^\D+/, "")) || 0);
+    this.counter = Math.max(this.counter, max);
+    this.emit({ type: "clear" });
+    for (const item of this.items) this.emit({ type: "add", item });
+    this.emit({ type: "timeline", timeline: this.timeline });
+  }
+
   setPaper(paper: PaperKind) {
     this.paper = paper;
     this.emit({ type: "paper", paper });

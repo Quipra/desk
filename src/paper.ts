@@ -53,6 +53,9 @@ export class Paper {
   /** A temporary item drawn on top while a person is mid-gesture. */
   preview: Item | null = null;
   onActivity: ((active: boolean) => void) | null = null;
+  /** Zoom factor and pan offset in CSS pixels, applied on top of the fit scale. */
+  view = { k: 1, x: 0, y: 0 };
+  onView: ((view: { k: number; x: number; y: number }) => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, scene: Scene) {
     this.canvas = canvas;
@@ -165,7 +168,54 @@ export class Paper {
   /** Convert a pointer event to paper coordinates. */
   toPaper(e: { clientX: number; clientY: number }): Pt {
     const r = this.canvas.getBoundingClientRect();
-    return { x: (e.clientX - r.left) / this.scale, y: (e.clientY - r.top) / this.scale };
+    const k = this.scale * this.view.k;
+    return { x: (e.clientX - r.left - this.view.x) / k, y: (e.clientY - r.top - this.view.y) / k };
+  }
+
+  private applyView(ctx: CanvasRenderingContext2D) {
+    const k = this.dpr * this.scale * this.view.k;
+    ctx.setTransform(k, 0, 0, k, this.dpr * this.view.x, this.dpr * this.view.y);
+  }
+
+  /** Zoom about a point given in CSS pixels relative to the canvas. */
+  zoomAt(factor: number, cx: number, cy: number) {
+    const k = Math.max(0.5, Math.min(8, this.view.k * factor));
+    const ratio = k / this.view.k;
+    this.setView({ k, x: cx - (cx - this.view.x) * ratio, y: cy - (cy - this.view.y) * ratio });
+  }
+
+  panBy(dx: number, dy: number) {
+    this.setView({ ...this.view, x: this.view.x + dx, y: this.view.y + dy });
+  }
+
+  /** Back to the sheet fitted in the stage. */
+  fit() {
+    this.setView({ k: 1, x: 0, y: 0 });
+  }
+
+  setView(view: { k: number; x: number; y: number }) {
+    this.view = view;
+    this.driedDirty = true;
+    this.onView?.(view);
+    this.render();
+  }
+
+  /** Render the sheet alone at a given pixel scale, for PNG export. */
+  snapshot(pixelScale = 2): HTMLCanvasElement {
+    const out = document.createElement("canvas");
+    out.width = Math.round(PAPER_W * pixelScale);
+    out.height = Math.round(PAPER_H * pixelScale);
+    const ctx = out.getContext("2d")!;
+    ctx.setTransform(pixelScale, 0, 0, pixelScale, 0, 0);
+    this.drawPaper(ctx);
+    for (const item of this.scene.items) {
+      if (item.hidden) continue;
+      if (item.motion) {
+        const pose = poseAt(item, this.time);
+        this.drawPosed(ctx, item, pose, 1, 1);
+      } else this.drawItem(ctx, item, 1);
+    }
+    return out;
   }
 
   enqueue(item: Item) {
@@ -309,7 +359,7 @@ export class Paper {
     // Moving marks are drawn every frame; only still ink dries.
     if (!this.dried || this.driedDirty || this.driedIds.has(item.id) || item.motion) return;
     const ctx = this.dried.ctx;
-    ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
+    this.applyView(ctx);
     this.drawItem(ctx, item, 1);
     this.driedIds.add(item.id);
   }
@@ -320,7 +370,7 @@ export class Paper {
     const ctx = this.dried.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.dried.canvas.width, this.dried.canvas.height);
-    ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
+    this.applyView(ctx);
     this.driedIds.clear();
     for (const item of this.scene.items) {
       if (item.hidden) {
@@ -342,7 +392,9 @@ export class Paper {
 
   render(now = performance.now()) {
     const ctx = this.ctx;
-    ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.applyView(ctx);
     this.drawPaper(ctx);
     if (this.dried) {
       if (this.driedDirty) this.rebuildDried();
@@ -389,6 +441,10 @@ export class Paper {
   private drawPaper(ctx: CanvasRenderingContext2D) {
     ctx.fillStyle = THEMES[this._theme].paper;
     ctx.fillRect(0, 0, PAPER_W, PAPER_H);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, PAPER_W, PAPER_H);
+    ctx.clip();
     ctx.lineWidth = 1;
     ctx.strokeStyle = THEMES[this._theme].grid;
     ctx.beginPath();
@@ -408,6 +464,7 @@ export class Paper {
       }
     }
     ctx.stroke();
+    ctx.restore();
   }
 
   /** The pen tip: a bright core inside a soft, slowly shifting bloom. */

@@ -1,27 +1,61 @@
 import "./style.css";
 import { applyTheme, type Theme } from "./appearance.ts";
+import { exportPNG, exportSVG, exportVideo } from "./export.ts";
+import { ICONS, type IconName } from "./icons.ts";
 import { Instruments, type Mode } from "./instruments.ts";
-import { Paper } from "./paper.ts";
-import { PALETTE, Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
-import { registerDesk } from "./webmcp.ts";
+import { deleteSheet, listSheets, saveSheet, thumbnail } from "./library.ts";
 import { keyTimes } from "./motion.ts";
+import { Paper } from "./paper.ts";
+import { PALETTE, PEN_PRESETS, Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
+import { registerDesk } from "./webmcp.ts";
 
-const COLORS = [PALETTE.ink, PALETTE.accent, PALETTE.blue, PALETTE.green, PALETTE.ochre];
-const COLOR_NAMES = ["ink · follows paper theme", "accent", "blue", "green", "ochre"];
+const COLORS: [string, string][] = [
+  [PALETTE.ink, "ink"],
+  [PALETTE.accent, "accent"],
+  [PALETTE.blue, "blue"],
+  [PALETTE.green, "green"],
+  [PALETTE.ochre, "ochre"],
+];
+const WIDTHS: [number, string][] = [
+  [1.5, "thin"],
+  [3, "medium"],
+  [7, "thick"],
+];
+const PENS: PenKind[] = ["pencil", "fineliner", "marker", "brush", "highlighter"];
+const STENCILS: StencilShape[] = ["rectangle", "triangle", "polygon"];
+const PAPERS: PaperKind[] = ["grid", "blank", "lined"];
+
 let theme: Theme = "charcoal";
-try { if (localStorage.getItem("desk-theme") === "paper") theme = "paper"; } catch { /* Drawing works without storage. */ }
+try {
+  if (localStorage.getItem("desk-theme") === "paper") theme = "paper";
+} catch {
+  /* Drawing works without storage. */
+}
 applyTheme(theme);
+
+const icon = (name: IconName) => ICONS[name];
+const tool = (id: string, name: IconName, title: string, extra = "") =>
+  `<button type="button" class="tool" id="${id}" title="${title}" aria-label="${title}" ${extra}>${icon(name)}</button>`;
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="top">
-    <div class="identity"><a class="wordmark" href="./" aria-label="Desk home">DESK</a><span class="tagline">one sheet, two hands</span></div>
+    <div class="identity">
+      <button type="button" class="wordmark" id="menu-button" aria-haspopup="menu" aria-expanded="false">DESK</button>
+      <span class="tagline">one sheet, two hands</span>
+    </div>
     <div class="status">
       <span id="cursor" aria-hidden="true"></span>
-      <button type="button" class="tool theme-toggle" id="theme" aria-pressed="false">charcoal</button>
+      <div class="zoom" role="group" aria-label="Zoom">
+        ${tool("zoom-out", "minus", "Zoom out")}
+        <button type="button" class="tool readout" id="zoom-readout" title="Fit to screen">100%</button>
+        ${tool("zoom-in", "plus", "Zoom in")}
+      </div>
+      <button type="button" class="tool text" id="theme" aria-pressed="false">charcoal</button>
       <span class="chip off" id="agent" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="agent-label">agent: connecting</span></span>
     </div>
   </header>
+  <div class="menu" id="menu" hidden role="menu"></div>
   <main class="stage" id="stage">
     <canvas id="paper" role="img" aria-label="Shared drawing sheet"></canvas>
     <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
@@ -29,36 +63,34 @@ app.innerHTML = `
     <aside class="layers" id="layers" hidden aria-label="Layers"></aside>
   </main>
   <section class="strip" id="strip" hidden aria-label="Timeline">
-    <button type="button" class="tool" id="play" aria-label="Play or pause">play</button>
+    ${tool("play", "play", "Play or pause")}
     <span class="clock" id="clock">0.00 / 4.00</span>
     <div class="scrub">
       <input type="range" id="scrub" min="0" max="4" step="0.01" value="0" aria-label="Scrub the timeline" />
       <div class="ticks" id="ticks" aria-hidden="true"></div>
     </div>
-    <button type="button" class="tool" id="loop" aria-pressed="true">loop</button>
-    <button type="button" class="tool" id="onion" aria-pressed="false">onion</button>
-    <button type="button" class="tool" id="export" title="Record one loop as a WebM video">export</button>
+    ${tool("loop", "loop", "Loop", 'aria-pressed="true"')}
+    ${tool("onion", "onion", "Onion skin", 'aria-pressed="false"')}
   </section>
   <footer class="tray">
+    <div class="picker" id="picker" hidden></div>
     <div class="tray-inner">
-      <div class="group" id="pens" role="group" aria-label="Pens">
-        <button type="button" class="tool active" data-pen="pencil" aria-pressed="true">pencil</button>
-        <button type="button" class="tool" data-pen="fineliner" aria-pressed="false">fineliner</button>
-        <button type="button" class="tool" data-pen="marker" aria-pressed="false">marker</button>
-        <button type="button" class="tool" data-pen="brush" aria-pressed="false">brush</button>
-        <button type="button" class="tool" data-pen="highlighter" aria-pressed="false">highlighter</button>
+      <div class="group" role="group" aria-label="Navigate">
+        ${tool("mode-hand", "hand", "Hand: pan the sheet (hold space)", 'data-mode="hand"')}
       </div>
-      <div class="group" id="colors" role="group" aria-label="Ink colors"></div>
-      <div class="group" id="modes" role="group" aria-label="Drawing tools">
-        <button type="button" class="tool" data-mode="eraser" aria-pressed="false">eraser</button>
-        <button type="button" class="tool" data-mode="ruler" aria-pressed="false">ruler</button>
-        <button type="button" class="tool" data-mode="compass" aria-pressed="false">compass</button>
-        <button type="button" class="tool" data-mode="stencil" data-stencil="rectangle" aria-pressed="false">stencil</button>
+      <div class="group" role="group" aria-label="Draw">
+        ${tool("mode-pen", "pencil", "Pen", 'data-mode="pen" class="tool active"')}
+        ${tool("mode-eraser", "eraser", "Eraser", 'data-mode="eraser"')}
       </div>
-      <div class="group" role="group" aria-label="Sheet controls">
-        <button type="button" class="tool" id="undo">undo</button>
-        <button type="button" class="tool" id="replay">replay</button>
-        <button type="button" class="tool" id="sheet" data-paper="grid" aria-label="Change sheet style; current style grid">sheet: grid</button>
+      <div class="group" role="group" aria-label="Instruments">
+        ${tool("mode-ruler", "ruler", "Ruler: drag a straight line", 'data-mode="ruler"')}
+        ${tool("mode-compass", "compass", "Compass: drag a circle", 'data-mode="compass"')}
+        ${tool("mode-stencil", "stencil", "Stencil: drag a shape", 'data-mode="stencil"')}
+      </div>
+      <div class="group" role="group" aria-label="Sheet">
+        ${tool("undo", "undo", "Undo your last mark")}
+        ${tool("replay", "replay", "Replay the sheet being drawn")}
+        ${tool("sheet", "grid", "Paper: grid, blank or lined")}
       </div>
     </div>
   </footer>
@@ -72,95 +104,182 @@ const instruments = new Instruments(paper, scene);
 paper.theme = theme;
 const motion = matchMedia("(prefers-reduced-motion: reduce)");
 paper.reducedMotion = motion.matches;
-motion.addEventListener("change", () => { paper.reducedMotion = motion.matches; });
+motion.addEventListener("change", () => {
+  paper.reducedMotion = motion.matches;
+});
 
+// Theme
 const themeButton = document.querySelector<HTMLButtonElement>("#theme")!;
 function updateTheme() {
   applyTheme(theme);
   paper.theme = theme;
   paper.render();
   themeButton.textContent = theme;
-  themeButton.setAttribute("aria-label", `Charcoal theme; switch to ${theme === "charcoal" ? "light paper" : "charcoal"}`);
+  themeButton.setAttribute("aria-label", `Theme ${theme}; switch to ${theme === "charcoal" ? "paper" : "charcoal"}`);
   themeButton.setAttribute("aria-pressed", String(theme === "charcoal"));
 }
 updateTheme();
 themeButton.addEventListener("click", () => {
   theme = theme === "charcoal" ? "paper" : "charcoal";
   updateTheme();
-  try { localStorage.setItem("desk-theme", theme); } catch { /* Theme still works for this tab. */ }
+  try {
+    localStorage.setItem("desk-theme", theme);
+  } catch {
+    /* Theme still works for this tab. */
+  }
 });
 
 new ResizeObserver(() => paper.resize()).observe(stage);
 paper.resize();
 
-// Tray wiring
-const penButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-pen]")];
+// Tray: modes, and a picker row above for the active tool's options.
 const modeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-mode]")];
-const colorsEl = document.querySelector<HTMLElement>("#colors")!;
-const STENCILS: StencilShape[] = ["rectangle", "triangle", "polygon"];
+const picker = document.querySelector<HTMLElement>("#picker")!;
+const sheetBtn = document.querySelector<HTMLButtonElement>("#sheet")!;
+let sheetPicker = false;
 
-for (const [index, c] of COLORS.entries()) {
-  const b = document.createElement("button");
-  b.className = "swatch" + (c === COLORS[0] ? " active" : "");
-  b.style.setProperty("--swatch", c === "auto" ? "var(--ink)" : c);
-  b.title = COLOR_NAMES[index];
-  b.dataset.color = c;
-  b.type = "button";
-  b.setAttribute("aria-label", `Use ${COLOR_NAMES[index]} ink`);
-  b.setAttribute("aria-pressed", String(c === COLORS[0]));
-  b.addEventListener("click", () => instruments.setColor(c));
-  colorsEl.appendChild(b);
+function renderPicker() {
+  const mode = instruments.mode;
+  const parts: string[] = [];
+  if (sheetPicker) {
+    parts.push(`<div class="pgroup">${PAPERS.map((p) => `<button type="button" class="tool${scene.paper === p ? " active" : ""}" data-paper="${p}" title="${p} paper">${icon(p)}</button>`).join("")}</div>`);
+  } else if (mode === "pen") {
+    parts.push(`<div class="pgroup">${PENS.map((k) => `<button type="button" class="tool${instruments.pen.kind === k ? " active" : ""}" data-pen="${k}" title="${k}">${icon(k)}</button>`).join("")}</div>`);
+    parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="dashed">${icon("dash")}</button></div>`);
+    parts.push(`<div class="pgroup colors">${COLORS.map(([c, name]) => `<button type="button" class="swatch${instruments.pen.color === c ? " active" : ""}" data-color="${c}" title="${name}" style="--swatch:${c === "auto" ? "var(--ink)" : c}"></button>`).join("")}<label class="swatch custom${COLORS.some(([c]) => c === instruments.pen.color) ? "" : " active"}" title="custom color" style="--swatch:${COLORS.some(([c]) => c === instruments.pen.color) ? "transparent" : instruments.pen.color}"><input type="color" id="custom-color" aria-label="Custom color" value="${/^#[0-9a-f]{6}$/i.test(instruments.pen.color) ? instruments.pen.color : "#dc716b"}"></label></div>`);
+  } else if (mode === "stencil") {
+    parts.push(`<div class="pgroup">${STENCILS.map((s) => `<button type="button" class="tool${instruments.stencil === s ? " active" : ""}" data-stencil="${s}" title="${s}">${icon(s)}</button>`).join("")}</div>`);
+  } else if (mode === "ruler" || mode === "compass") {
+    parts.push(`<div class="pgroup">${WIDTHS.map(([w, name]) => `<button type="button" class="tool width${Math.abs(instruments.pen.width - w) < 0.01 ? " active" : ""}" data-width="${w}" title="${name}"><i style="height:${Math.max(2, w)}px"></i></button>`).join("")}<button type="button" class="tool${instruments.pen.dash ? " active" : ""}" data-dash title="dashed">${icon("dash")}</button></div>`);
+    parts.push(`<div class="pgroup colors">${COLORS.map(([c, name]) => `<button type="button" class="swatch${instruments.pen.color === c ? " active" : ""}" data-color="${c}" title="${name}" style="--swatch:${c === "auto" ? "var(--ink)" : c}"></button>`).join("")}</div>`);
+  }
+  picker.hidden = parts.length === 0;
+  picker.innerHTML = parts.join('<span class="sep"></span>');
+  for (const b of modeButtons) {
+    const active = b.dataset.mode === mode && !sheetPicker;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-pressed", String(active));
+  }
+  document.querySelector("#mode-pen")!.innerHTML = icon(instruments.pen.kind);
+  sheetBtn.innerHTML = icon(scene.paper);
+  sheetBtn.classList.toggle("active", sheetPicker);
 }
-
-for (const b of penButtons) b.addEventListener("click", () => instruments.setPenKind(b.dataset.pen as PenKind));
+picker.addEventListener("click", (e) => {
+  const el = (e.target as HTMLElement).closest<HTMLElement>("[data-pen],[data-width],[data-dash],[data-color],[data-stencil],[data-paper]");
+  if (!el) return;
+  if (el.dataset.pen) instruments.setPenKind(el.dataset.pen as PenKind);
+  else if (el.dataset.width) instruments.setWidth(Number(el.dataset.width));
+  else if (el.hasAttribute("data-dash")) instruments.setDash(!instruments.pen.dash);
+  else if (el.dataset.color) instruments.setColor(el.dataset.color);
+  else if (el.dataset.stencil) {
+    instruments.stencil = el.dataset.stencil as StencilShape;
+    renderPicker();
+  } else if (el.dataset.paper) {
+    scene.setPaper(el.dataset.paper as PaperKind);
+    sheetPicker = false;
+    renderPicker();
+  }
+});
+picker.addEventListener("input", (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.id === "custom-color") instruments.setColor(input.value);
+});
 for (const b of modeButtons) {
   b.addEventListener("click", () => {
-    const mode = b.dataset.mode as Mode;
-    if (mode === "stencil" && instruments.mode === "stencil") {
-      // Tapping the stencil again cycles the shape.
-      const next = STENCILS[(STENCILS.indexOf(instruments.stencil) + 1) % STENCILS.length];
-      instruments.stencil = next;
-    }
-    instruments.setMode(mode);
+    sheetPicker = false;
+    instruments.setMode(b.dataset.mode as Mode);
+    canvas.style.cursor = b.dataset.mode === "hand" ? "grab" : "crosshair";
   });
 }
-
-instruments.onChange = () => {
-  for (const b of penButtons) {
-    const active = instruments.mode === "pen" && b.dataset.pen === instruments.pen.kind;
-    b.classList.toggle("active", active);
-    b.setAttribute("aria-pressed", String(active));
-  }
-  for (const b of modeButtons) {
-    const active = b.dataset.mode === instruments.mode;
-    b.classList.toggle("active", active);
-    b.setAttribute("aria-pressed", String(active));
-    if (b.dataset.mode === "stencil") b.textContent = instruments.mode === "stencil" ? `stencil: ${instruments.stencil}` : "stencil";
-  }
-  for (const s of colorsEl.children) {
-    const active = (s as HTMLElement).dataset.color === instruments.pen.color;
-    (s as HTMLElement).classList.toggle("active", active);
-    s.setAttribute("aria-pressed", String(active));
-  }
-};
-
+sheetBtn.addEventListener("click", () => {
+  sheetPicker = !sheetPicker;
+  renderPicker();
+});
+instruments.onChange = renderPicker;
+renderPicker();
 document.querySelector("#undo")!.addEventListener("click", () => scene.undo("human"));
 document.querySelector("#replay")!.addEventListener("click", () => paper.replay());
-const sheetBtn = document.querySelector<HTMLButtonElement>("#sheet")!;
-sheetBtn.addEventListener("click", () => {
-  const order: PaperKind[] = ["grid", "blank", "lined"];
-  const next = order[(order.indexOf(scene.paper) + 1) % order.length];
-  scene.setPaper(next);
-});
-const hint = document.querySelector<HTMLElement>("#hint")!;
-const paperStatus = document.querySelector<HTMLElement>("#paper-status")!;
-scene.on((e) => {
-  if (e.type === "paper" || e.type === "clear") {
-    sheetBtn.textContent = `sheet: ${scene.paper}`;
-    sheetBtn.setAttribute("aria-label", `Change sheet style; current style ${scene.paper}`);
+
+// Zoom and pan
+const readout = document.querySelector<HTMLButtonElement>("#zoom-readout")!;
+paper.onView = (v) => {
+  readout.textContent = `${Math.round(v.k * 100)}%`;
+};
+document.querySelector("#zoom-in")!.addEventListener("click", () => paper.zoomAt(1.25, canvas.clientWidth / 2, canvas.clientHeight / 2));
+document.querySelector("#zoom-out")!.addEventListener("click", () => paper.zoomAt(0.8, canvas.clientWidth / 2, canvas.clientHeight / 2));
+readout.addEventListener("click", () => paper.fit());
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    if (e.ctrlKey || e.metaKey) paper.zoomAt(Math.exp(-e.deltaY * 0.004), e.clientX - r.left, e.clientY - r.top);
+    else paper.panBy(-e.deltaX, -e.deltaY);
+  },
+  { passive: false },
+);
+let space = false;
+let panning: { id: number; x: number; y: number } | null = null;
+canvas.addEventListener(
+  "pointerdown",
+  (e) => {
+    const pan = instruments.mode === "hand" || space || e.button === 1;
+    if (!pan) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    panning = { id: e.pointerId, x: e.clientX, y: e.clientY };
+    canvas.setPointerCapture(e.pointerId);
+    canvas.style.cursor = "grabbing";
+  },
+  { capture: true },
+);
+canvas.addEventListener(
+  "pointermove",
+  (e) => {
+    if (!panning || e.pointerId !== panning.id) return;
+    e.stopImmediatePropagation();
+    paper.panBy(e.clientX - panning.x, e.clientY - panning.y);
+    panning = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  },
+  { capture: true },
+);
+const endPan = (e: PointerEvent) => {
+  if (!panning || e.pointerId !== panning.id) return;
+  e.stopImmediatePropagation();
+  panning = null;
+  canvas.style.cursor = instruments.mode === "hand" || space ? "grab" : "crosshair";
+};
+canvas.addEventListener("pointerup", endPan, { capture: true });
+canvas.addEventListener("pointercancel", endPan, { capture: true });
+window.addEventListener("keydown", (e) => {
+  const typing = (e.target as HTMLElement)?.tagName === "INPUT";
+  if (typing) return;
+  if (e.code === "Space" && !e.repeat) {
+    space = true;
+    canvas.style.cursor = "grab";
+    if (!strip.hidden) {
+      e.preventDefault();
+    }
   }
-  hint.hidden = scene.items.length > 0;
-  paperStatus.textContent = `The ${scene.paper} sheet has ${scene.items.length} ${scene.items.length === 1 ? "mark" : "marks"}.`;
+  if (e.key === "0" && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    paper.fit();
+  }
+  if ((e.key === "=" || e.key === "+") && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    paper.zoomAt(1.25, canvas.clientWidth / 2, canvas.clientHeight / 2);
+  }
+  if (e.key === "-" && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    paper.zoomAt(0.8, canvas.clientWidth / 2, canvas.clientHeight / 2);
+  }
+});
+window.addEventListener("keyup", (e) => {
+  if (e.code === "Space") {
+    space = false;
+    canvas.style.cursor = instruments.mode === "hand" ? "grab" : "crosshair";
+    if (!strip.hidden && !panning && (e.target as HTMLElement)?.tagName !== "INPUT") paper.toggle();
+  }
 });
 
 // Timeline strip: appears once anything moves.
@@ -179,16 +298,19 @@ function syncStrip() {
   loopBtn.setAttribute("aria-pressed", String(loop));
   onionBtn.classList.toggle("active", onion);
   onionBtn.setAttribute("aria-pressed", String(onion));
-  ticks.replaceChildren(...keyTimes(scene.items).map((t) => {
-    const el = document.createElement("i");
-    el.style.left = `${(t / duration) * 100}%`;
-    return el;
-  }));
+  ticks.replaceChildren(
+    ...keyTimes(scene.items).map((t) => {
+      const el = document.createElement("i");
+      el.style.left = `${(t / duration) * 100}%`;
+      return el;
+    }),
+  );
 }
 paper.onTime = (time, playing) => {
   scrub.value = String(time);
   clock.textContent = `${time.toFixed(2)} / ${scene.timeline.duration.toFixed(2)}`;
-  playBtn.textContent = playing ? "pause" : "play";
+  playBtn.innerHTML = icon(playing ? "pause" : "play");
+  playBtn.title = playing ? "Pause" : "Play";
 };
 playBtn.addEventListener("click", () => paper.toggle());
 scrub.addEventListener("input", () => {
@@ -197,54 +319,8 @@ scrub.addEventListener("input", () => {
 });
 loopBtn.addEventListener("click", () => scene.setTimeline({ loop: !scene.timeline.loop }));
 onionBtn.addEventListener("click", () => scene.setTimeline({ onion: !scene.timeline.onion }));
-window.addEventListener("keydown", (e) => {
-  if (e.code !== "Space" || strip.hidden || (e.target as HTMLElement)?.tagName === "INPUT") return;
-  e.preventDefault();
-  paper.toggle();
-});
-scene.on((e) => {
-  if (e.type === "motion" || e.type === "timeline" || e.type === "clear" || e.type === "remove") syncStrip();
-});
 
-// Export: record one loop of the animation from the canvas as WebM.
-const exportBtn = document.querySelector<HTMLButtonElement>("#export")!;
-exportBtn.addEventListener("click", async () => {
-  const stream = (canvas as HTMLCanvasElement & { captureStream?: (fps: number) => MediaStream }).captureStream?.(scene.timeline.fps > 30 ? 60 : 30);
-  if (!stream || typeof MediaRecorder === "undefined") {
-    addNotice("This browser can't record the canvas. Screen-record the sheet instead.", "alert");
-    return;
-  }
-  const mime = ["video/webm;codecs=vp9", "video/webm"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8_000_000 } : undefined);
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-  rec.onstop = () => {
-    const blob = new Blob(chunks, { type: "video/webm" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "desk.webm";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    exportBtn.disabled = false;
-    exportBtn.textContent = "export";
-  };
-  exportBtn.disabled = true;
-  exportBtn.textContent = "recording";
-  paper.pause();
-  paper.seek(0);
-  rec.start();
-  const wasLoop = scene.timeline.loop;
-  scene.setTimeline({ loop: false });
-  paper.play({ once: true });
-  const stop = () => {
-    scene.setTimeline({ loop: wasLoop });
-    rec.stop();
-  };
-  const check = () => (paper.playing ? setTimeout(check, 60) : setTimeout(stop, 200));
-  check();
-});
-
-// Layers panel: groups as layers, Figma-style, with visibility and z-order.
+// Layers panel: groups as layers, with visibility and z-order.
 const layersEl = document.querySelector<HTMLElement>("#layers")!;
 function syncLayers() {
   const groups = new Map<string, { ids: string[]; hidden: boolean; moving: boolean }>();
@@ -263,18 +339,20 @@ function syncLayers() {
     const eye = document.createElement("button");
     eye.type = "button";
     eye.className = "eye";
+    eye.innerHTML = icon(g.hidden ? "eyeOff" : "eye");
     eye.title = g.hidden ? "show" : "hide";
     eye.setAttribute("aria-label", `${g.hidden ? "Show" : "Hide"} ${name}`);
     eye.addEventListener("click", () => {
-      scene.update(g.ids.map((id) => {
-        const item = scene.get(id)!;
-        if (g.hidden) {
-          const { hidden: _h, ...rest } = item;
-          return rest as typeof item;
-        }
-        return { ...item, hidden: true };
-      }));
-      syncLayers();
+      scene.update(
+        g.ids.map((id) => {
+          const item = scene.get(id)!;
+          if (g.hidden) {
+            const { hidden: _h, ...rest } = item;
+            return rest as typeof item;
+          }
+          return { ...item, hidden: true };
+        }),
+      );
     });
     const label = document.createElement("span");
     label.className = "name";
@@ -286,7 +364,7 @@ function syncLayers() {
     const up = document.createElement("button");
     up.type = "button";
     up.className = "order";
-    up.textContent = "↑";
+    up.innerHTML = icon("front");
     up.title = "bring to front";
     up.addEventListener("click", () => scene.reorder(g.ids, "front"));
     row.append(eye, label, meta, up);
@@ -297,7 +375,132 @@ function syncLayers() {
   title.textContent = "layers";
   layersEl.replaceChildren(title, ...rows);
 }
-scene.on(() => syncLayers());
+
+// Menu under the wordmark: new, save, export, and the library of saved sheets.
+const menu = document.querySelector<HTMLElement>("#menu")!;
+const menuButton = document.querySelector<HTMLButtonElement>("#menu-button")!;
+let currentSheetId: string | undefined;
+let currentSheetName = "untitled";
+function renderMenu() {
+  const sheets = listSheets();
+  menu.innerHTML = `
+    <div class="menu-row">
+      <button type="button" class="mitem" data-act="new">${icon("blank")}<span>New sheet</span></button>
+      <button type="button" class="mitem" data-act="save">${icon("save")}<span>Save</span><kbd>⌘S</kbd></button>
+    </div>
+    <div class="menu-row">
+      <button type="button" class="mitem" data-act="png">${icon("export")}<span>PNG</span></button>
+      <button type="button" class="mitem" data-act="svg">${icon("export")}<span>SVG</span></button>
+      <button type="button" class="mitem" data-act="video" ${scene.animated ? "" : "disabled"}>${icon("export")}<span>Video</span></button>
+    </div>
+    <div class="menu-title">${icon("library")}<span>library</span><em>${sheets.length ? `${sheets.length} saved` : "nothing saved yet"}</em></div>
+    <div class="library">
+      ${sheets
+        .map(
+          (s) => `<div class="card${s.id === currentSheetId ? " current" : ""}" data-id="${s.id}">
+        <img src="${s.thumb}" alt="" />
+        <div class="card-meta"><span class="card-name">${s.name.replace(/[<>&]/g, "")}</span><span class="card-date">${new Date(s.savedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span></div>
+        <button type="button" class="card-delete" data-delete="${s.id}" title="delete">${icon("trash")}</button>
+      </div>`,
+        )
+        .join("")}
+    </div>`;
+}
+function openMenu(open: boolean) {
+  menu.hidden = !open;
+  menuButton.setAttribute("aria-expanded", String(open));
+  if (open) renderMenu();
+}
+menuButton.addEventListener("click", () => openMenu(Boolean(menu.hidden)));
+document.addEventListener("pointerdown", (e) => {
+  if (menu.hidden) return;
+  const t = e.target as HTMLElement;
+  if (!menu.contains(t) && t !== menuButton) openMenu(false);
+});
+function save() {
+  const thumb = thumbnail(paper.snapshot(0.3));
+  const name = currentSheetId ? currentSheetName : window.prompt("Name this sheet", currentSheetName) ?? "";
+  if (!name.trim()) return;
+  const saved = saveSheet({ id: currentSheetId, name: name.trim(), paper: scene.paper, timeline: scene.timeline, items: scene.items, thumb });
+  if (!saved) {
+    addNotice("Couldn't save: this browser's storage is full or blocked.", "alert");
+    return;
+  }
+  currentSheetId = saved.id;
+  currentSheetName = saved.name;
+  addNotice(`Saved “${saved.name}”.`);
+  if (!menu.hidden) renderMenu();
+}
+menu.addEventListener("click", async (e) => {
+  const target = e.target as HTMLElement;
+  const del = target.closest<HTMLElement>("[data-delete]");
+  if (del) {
+    deleteSheet(del.dataset.delete!);
+    if (currentSheetId === del.dataset.delete) currentSheetId = undefined;
+    renderMenu();
+    return;
+  }
+  const card = target.closest<HTMLElement>(".card");
+  if (card) {
+    const sheet = listSheets().find((s) => s.id === card.dataset.id);
+    if (!sheet) return;
+    scene.load({ items: sheet.items, paper: sheet.paper, timeline: sheet.timeline });
+    currentSheetId = sheet.id;
+    currentSheetName = sheet.name;
+    paper.fit();
+    openMenu(false);
+    return;
+  }
+  const item = target.closest<HTMLElement>("[data-act]");
+  if (!item) return;
+  switch (item.dataset.act) {
+    case "new":
+      if (scene.items.length && !window.confirm("Start a new sheet? Unsaved marks are lost.")) return;
+      scene.clear();
+      currentSheetId = undefined;
+      currentSheetName = "untitled";
+      paper.fit();
+      openMenu(false);
+      break;
+    case "save":
+      save();
+      break;
+    case "png":
+      await exportPNG(paper, `${currentSheetName}.png`);
+      openMenu(false);
+      break;
+    case "svg":
+      exportSVG(scene, theme, paper.time, `${currentSheetName}.svg`);
+      openMenu(false);
+      break;
+    case "video":
+      openMenu(false);
+      addNotice("Recording one loop…");
+      try {
+        await exportVideo(canvas, paper, scene, `${currentSheetName}.webm`);
+      } catch (err) {
+        addNotice(err instanceof Error ? err.message : String(err), "alert");
+      }
+      break;
+  }
+});
+window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    save();
+  }
+});
+
+// Scene-driven UI state
+const hint = document.querySelector<HTMLElement>("#hint")!;
+const paperStatus = document.querySelector<HTMLElement>("#paper-status")!;
+scene.on((e) => {
+  if (e.type === "paper" || e.type === "clear") renderPicker();
+  hint.hidden = scene.items.length > 0;
+  paperStatus.textContent = `The ${scene.paper} sheet has ${scene.items.length} ${scene.items.length === 1 ? "mark" : "marks"}.`;
+  if (e.type === "motion" || e.type === "timeline" || e.type === "clear" || e.type === "remove") syncStrip();
+  syncLayers();
+});
 
 // Pointer readout in paper units, useful when talking to the agent about positions.
 const cursorEl = document.querySelector<HTMLElement>("#cursor")!;
@@ -321,7 +524,6 @@ function setAgentActive(active: boolean) {
     agentLabel.textContent = "agent: drawing";
     return;
   }
-  // Debounce so rapid tool calls read as one continuous session at the desk.
   const settle = () => {
     const remaining = activeUntil - performance.now();
     if (remaining > 0) {
@@ -338,15 +540,21 @@ function setAgentActive(active: boolean) {
 }
 paper.onActivity = setAgentActive;
 
-registerDesk(scene, paper, {
-  onActivity: setAgentActive,
-  onTool(name, source) {
-    agentChip.title = `last tool: ${name} (${source})`;
+registerDesk(
+  scene,
+  paper,
+  {
+    onActivity: setAgentActive,
+    onTool(name, source) {
+      agentChip.title = `last tool: ${name} (${source})`;
+    },
   },
-}, { waitMs: 3000 }).then((desk) => {
-  // Handy for trying instruments from the console and for automated checks.
+  { waitMs: 3000 },
+).then((desk) => {
   (window as unknown as { desk: unknown }).desk = desk;
-  window.addEventListener("pagehide", (event) => { if (!event.persisted) desk.dispose(); });
+  window.addEventListener("pagehide", (event) => {
+    if (!event.persisted) desk.dispose();
+  });
   if (desk.connected) {
     agentChip.className = "chip";
     idleLabel = "agent: ready";
@@ -380,4 +588,7 @@ function addNotice(message: string, role: "status" | "alert" = "status") {
   notice.setAttribute("role", role);
   notice.textContent = message;
   stage.appendChild(notice);
+  if (role === "status") setTimeout(() => notice.remove(), 2600);
 }
+
+void PEN_PRESETS;
