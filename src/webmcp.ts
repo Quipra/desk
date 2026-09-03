@@ -95,7 +95,7 @@ const penKinds = Object.keys(PEN_PRESETS);
 const pen = {
   type: "object",
   description:
-    "Pen for this mark: kind, or brush (a name you made with make), color by name (ink, accent, blue, green, ochre) or hex, width 1..24, opacity 0.05..1, dash for construction lines, texture grain|chalk, taper for thin ends, fill hatch|crosshatch|stipple and/or fillColor (solid) for closed paths, shapes and circles, hatchAngle.",
+    "Pen for this mark: kind, or brush (a name you made with make), color by name (ink, accent, blue, green, ochre) or hex, width 1..64, opacity 0.05..1, dash for construction lines, texture grain|chalk, taper for thin ends, fill hatch|crosshatch|stipple and/or fillColor (solid) for closed paths, shapes and circles, hatchAngle. Brush engine: tip (round, soft, flat, bristle, chalk, pencil), spacing, scatter, grain.",
   properties: {
     kind: { type: "string", enum: penKinds },
     brush: { type: "string", description: "name of a brush made with make" },
@@ -108,6 +108,10 @@ const pen = {
     fill: { type: "string", enum: ["hatch", "crosshatch", "stipple", "none"] },
     hatchAngle: { type: "number" },
     fillColor: { type: "string", description: "solid fill for closed paths, shapes and circles: palette name, hex, auto, or none" },
+    tip: { type: "string", enum: ["round", "soft", "flat", "bristle", "chalk", "pencil"], description: "brush tip stamped along the stroke" },
+    spacing: { type: "number", description: "stamp spacing as a fraction of size, 0.03..0.5" },
+    scatter: { type: "number", description: "stamp scatter across the path, 0..1" },
+    grain: { type: "number", description: "paper grain strength 0..1" },
   },
   additionalProperties: false,
 };
@@ -982,7 +986,7 @@ function resolvePenWith(base: Pen, input: unknown, brushes: Map<string, { pen: P
     delete next.brush;
   }
   if (i.color !== undefined) next.color = cssColor(i.color);
-  if (i.width !== undefined) next.width = ranged(i.width, "width", 1, 24);
+  if (i.width !== undefined) next.width = ranged(i.width, "width", 1, 64);
   if (i.opacity !== undefined) next.opacity = ranged(i.opacity, "opacity", 0.05, 1);
   for (const flag of ["dash", "taper"] as const) {
     if (i[flag] === undefined) continue;
@@ -1004,7 +1008,15 @@ function resolvePenWith(base: Pen, input: unknown, brushes: Map<string, { pen: P
     const f = requiredText(i.fillColor, "fillColor", 64);
     next.fillColor = f === "none" ? undefined : cssColor(f);
   }
-  for (const key of ["dash", "taper", "texture", "fill", "hatchAngle", "brush", "fillColor"] as const) if (next[key] === undefined || next[key] === false) delete next[key];
+  if (i.tip !== undefined) {
+    const tip = requiredText(i.tip, "tip");
+    if (!["round", "soft", "flat", "bristle", "chalk", "pencil"].includes(tip)) throw new Error("tip must be round, soft, flat, bristle, chalk or pencil");
+    next.tip = tip as Pen["tip"];
+  }
+  if (i.spacing !== undefined) next.spacing = ranged(i.spacing, "spacing", 0.03, 0.5);
+  if (i.scatter !== undefined) next.scatter = ranged(i.scatter, "scatter", 0, 1);
+  if (i.grain !== undefined) next.grain = ranged(i.grain, "grain", 0, 1);
+  for (const key of ["dash", "taper", "texture", "fill", "hatchAngle", "brush", "fillColor", "tip", "spacing", "scatter", "grain"] as const) if (next[key] === undefined || next[key] === false) delete next[key];
   return next;
 }
 

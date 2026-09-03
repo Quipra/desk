@@ -34,6 +34,12 @@ export interface Pen {
   hatchAngle?: number;
   /** Solid fill for closed paths, shapes and circles: a color, or "auto" for theme ink. */
   fillColor?: string;
+  /** Brush engine overrides for custom brushes. */
+  tip?: import("./brush.ts").Tip;
+  spacing?: number;
+  scatter?: number;
+  /** Paper grain strength 0..1 (overrides the kind's default). */
+  grain?: number;
 }
 
 export interface Pt {

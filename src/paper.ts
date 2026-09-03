@@ -10,6 +10,7 @@
 import { bbox, clampPt, PAPER_H, PAPER_W, pathPoints, shapeVertices, transformItem, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
 import { inkColor, THEMES, type Theme } from "./appearance.ts";
 import { poseAt, type Pose } from "./motion.ts";
+import { applyGrain, BRUSHES, stampPath, type BrushDef } from "./brush.ts";
 
 const GLOW_MS = 1100;
 const INK_SPEED = 1600; // paper units per second, before the batch budget
@@ -49,6 +50,8 @@ export class Paper {
   private dried: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
   private driedIds = new Set<string>();
   private driedDirty = true;
+  /** Scratch layer for grain-masked strokes, sized on demand. */
+  private scratch: CanvasRenderingContext2D | null = null;
   /** The view the dried layer was painted for; while the view moves it is reused, scaled. */
   private driedView = { k: 1, x: 0, y: 0 };
   private viewTimer: ReturnType<typeof setTimeout> | undefined;
@@ -67,6 +70,7 @@ export class Paper {
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
     this.dried = makeLayer();
+    this.scratch = makeLayer()?.ctx ?? null;
     scene.on((e) => {
       if (e.type === "add") {
         if (e.item.author === "agent") this.enqueue(e.item);
@@ -708,18 +712,63 @@ export class Paper {
   }
 
   /** Strokes are filled ribbons so width can vary smoothly with pressure. */
+  /**
+   * Freehand ink. The fineliner is a crisp vector ribbon; every other pen is a
+   * stamp brush: a tip laid along the path with pressure driving size and
+   * flow, masked by paper grain where the kind calls for it. Halos stay ribbons.
+   */
   private drawStroke(ctx: CanvasRenderingContext2D, all: Pt[], pen: Pen, t: number, extra: number) {
-    if (pen.texture === "chalk" && !extra) {
-      // Chalk: three soft offset passes read as a dry, dusty edge.
-      const alpha = ctx.globalAlpha;
-      ctx.globalAlpha = alpha * 0.4;
-      for (const [ox, oy] of [[-1.2, 0.8], [1.1, -0.9], [0, 0]] as const) {
-        this.drawRibbon(ctx, all.map((p) => ({ ...p, x: p.x + ox, y: p.y + oy })), pen, t, extra);
-      }
-      ctx.globalAlpha = alpha;
+    if (extra || pen.kind === "fineliner") {
+      this.drawRibbon(ctx, all, pen, t, extra);
       return;
     }
-    this.drawRibbon(ctx, all, pen, t, extra);
+    const pts = revealed(all, t);
+    if (pts.length === 0) return;
+    const def = brushFor(pen);
+    const color = inkColor(pen.color, this._theme);
+    const alpha = ctx.globalAlpha;
+    const taper = pen.taper ? 36 : 0;
+    if (def.grain > 0.02 && this.scratch) {
+      // Stamp into a scratch layer in device space, mask it with grain, composite once.
+      const m = ctx.getTransform();
+      const pad = pen.width * 2 + 4;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of pts) {
+        x0 = Math.min(x0, p.x - pad); y0 = Math.min(y0, p.y - pad);
+        x1 = Math.max(x1, p.x + pad); y1 = Math.max(y1, p.y + pad);
+      }
+      const corners = [m.transformPoint({ x: x0, y: y0 }), m.transformPoint({ x: x1, y: y1 })];
+      const rx = Math.max(0, Math.floor(Math.min(corners[0].x, corners[1].x)));
+      const ry = Math.max(0, Math.floor(Math.min(corners[0].y, corners[1].y)));
+      const rw = Math.min(this.canvas.width, Math.ceil(Math.max(corners[0].x, corners[1].x))) - rx;
+      const rh = Math.min(this.canvas.height, Math.ceil(Math.max(corners[0].y, corners[1].y))) - ry;
+      if (rw <= 0 || rh <= 0) return;
+      const layer = this.scratch;
+      if (layer.canvas.width < rw || layer.canvas.height < rh) {
+        layer.canvas.width = Math.max(layer.canvas.width, rw);
+        layer.canvas.height = Math.max(layer.canvas.height, rh);
+      }
+      layer.setTransform(1, 0, 0, 1, 0, 0);
+      layer.clearRect(0, 0, rw, rh);
+      const local = new DOMMatrix([m.a, m.b, m.c, m.d, m.e - rx, m.f - ry]);
+      layer.setTransform(local);
+      const ok = stampPath(layer, pts, pen, { color, opacity: 1, boil: this.boilSeed, taper, def: { ...def, multiply: false } });
+      if (!ok) {
+        this.drawRibbon(ctx, all, pen, t, extra);
+        return;
+      }
+      applyGrain(layer, def.grain, local, this.boilSeed);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = alpha;
+      if (def.multiply) ctx.globalCompositeOperation = "multiply";
+      ctx.drawImage(layer.canvas, 0, 0, rw, rh, rx, ry, rw, rh);
+      ctx.restore();
+      return;
+    }
+    const ok = stampPath(ctx, pts, pen, { color, opacity: alpha, boil: this.boilSeed, taper, def });
+    if (!ok) this.drawRibbon(ctx, all, pen, t, extra);
+    ctx.globalAlpha = alpha;
   }
 
   private drawRibbon(ctx: CanvasRenderingContext2D, all: Pt[], pen: Pen, t: number, extra: number) {
@@ -778,6 +827,19 @@ export class Paper {
       ctx.fill();
     }
   }
+}
+
+/** The brush definition for a pen: the kind's engine settings plus any overrides. */
+function brushFor(pen: Pen): BrushDef {
+  const base = pen.kind === "fineliner" ? BRUSHES.pencil : BRUSHES[pen.kind];
+  const def: BrushDef = { ...base };
+  if (pen.texture === "chalk") Object.assign(def, { tip: "chalk", grain: Math.max(def.grain, 0.7), spacing: 0.1, scatter: 0.05, multiply: true });
+  if (pen.texture === "grain") def.grain = Math.max(def.grain, 0.9);
+  if (pen.tip) def.tip = pen.tip;
+  if (pen.spacing !== undefined) def.spacing = pen.spacing;
+  if (pen.scatter !== undefined) def.scatter = pen.scatter;
+  if (pen.grain !== undefined) def.grain = pen.grain;
+  return def;
 }
 
 /** An offscreen canvas for dried ink, when the environment can make one. */
