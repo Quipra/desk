@@ -30,7 +30,7 @@ Fifteen tools registered with `document.modelContext.registerTool` (with a `navi
 
 | Tool | On the desk |
 |---|---|
-| `guide` | How the desk works: coordinates, instruments, pens, lettering, recipes, ruler-and-compass constructions. The first `look` includes it |
+| `guide` | One skill by topic: geometry, lettering, vectors, illustration, animation, recipes, collaboration, layers. The core skill and an index ride on the first `look` |
 | `look` | Every mark with id, label, group, author, pen and bounding box, what changed since the last look, the agent's own brushes and recipes, and a 48 × 32 map of where ink is |
 | `measure` | Exact geometry without ink: distance and angle between points, one mark's length, midpoint, center, radius or vertices, or the exact crossing points of two marks |
 | `pick_pen` | Default pen for later marks. Any mark can carry its own inline pen instead |
@@ -51,6 +51,8 @@ Fifteen tools registered with `document.modelContext.registerTool` (with a `navi
 **Vectors and layers.** `path` takes SVG path data and makes a real vector mark that fills, transforms, animates and crosses like everything else. Groups are layers: a panel on the right lists them with visibility and z-order, and `edit` can hide, show, and reorder.
 
 Five pens: pencil, fineliner, marker, brush, highlighter. Every pen can be dashed, tapered, textured (grain or chalk), and can fill closed shapes and circles with hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
+
+**Skills, not a manual.** The agent reads the core skill once (about 450 tokens) with an index of eight more, and pulls a topic only when the task calls for it: geometry before a construction, lettering before a label, animation before motion. The same text lives in `skills/*/SKILL.md` for coding agents and humans.
 
 Designed for few round-trips. A typical figure is one `look`, one `construct` with `verify`, done. In a scripted case study (a model given each tool set and the same task: draw segment AB, construct its perpendicular bisector with compass and ruler, label A and B, verify), the earlier eleven-tool set planned 13 calls; this set planned 1, both executing with no errors against the real tool code. The guide rides along with the first look, pens are inline, exact points come from `measure`, and the agent can write a recipe once and stamp it with different parameters.
 
@@ -101,6 +103,6 @@ await desk.call("construct", { verify: true, steps: [
 - `src/export.ts` — PNG, SVG and WebM exporters
 - `src/library.ts` — saved sheets in the browser
 - `src/icons.ts` — the tray's line icons
-- `SKILL.md` — a short skill for coding agents that build on Desk
+- `src/skills.ts` — the skills the `guide` tool serves; `skills/` is generated from it by `npm run skills`
 
 MIT.

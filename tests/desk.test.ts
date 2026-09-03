@@ -364,9 +364,14 @@ test("construct runs steps in order with the shared pen and stops at the first b
   assert.equal(scene.items.length, 2);
   assert.equal(scene.items[0].pen.width, 5);
   assert.deepEqual(await desk.call("construct", { steps: [{ tool: "guide" }] }), { done: 0, results: [], error: "step 0: tool must be one of pick_pen, draw, ruler, compass, stencil, path, edit, erase, undo, timeline, recipe" });
-  const guide = await desk.call("guide") as { guide: string; tools: string[] };
-  assert.ok(guide.guide.includes("1200 wide x 800 tall"));
+  const guide = await desk.call("guide") as { core: string; index: string; tools: string[] };
+  assert.ok(guide.core.includes("1200 wide x 800 tall"));
+  assert.ok(guide.index.includes("- geometry:"));
   assert.equal(guide.tools.length, 15);
+  const topic = await desk.call("guide", { topic: "animation" }) as { topic: string; skill: string };
+  assert.equal(topic.topic, "animation");
+  assert.ok(topic.skill.includes("keyframe"));
+  assert.ok("error" in (await desk.call("guide", { topic: "cooking" }) as object));
 });
 
 test("grouped strokes preserve pen lifts and undo as one mark", async () => {

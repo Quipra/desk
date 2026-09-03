@@ -6,7 +6,7 @@
 // definitions: type, properties, required, enum, items, description,
 // additionalProperties. Ranges and lengths are validated in code instead.
 
-import { GUIDE } from "./guide.ts";
+import { coreGuide, SKILL_NAMES, SKILLS, skillIndex } from "./skills.ts";
 import { intersections, properties } from "./geometry.ts";
 import { describe } from "./look.ts";
 import { substitute, type ParamValue } from "./recipes.ts";
@@ -529,7 +529,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       timeline: timelineState(),
       ...(at !== null ? { at } : {}),
       drawing: paper.busy,
-      ...(first ? { guide: GUIDE } : {}),
+      ...(first ? { guide: coreGuide() } : {}),
     };
   };
 
@@ -537,11 +537,15 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     {
       name: "guide",
       annotations: { readOnlyHint: true },
-      description: "Read how the desk works: coordinates, instruments, pens, lettering, and ruler-and-compass recipes. The first look of a session includes this too.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      execute: wrap(() => {
+      description: `Read one desk skill by topic: ${SKILL_NAMES.join(", ")}. core (the desk and its loop) comes with the first look; read geometry before a construction, lettering before labels, vectors for organic shapes, illustration for pictures, animation for motion, recipes to make your own tools, collaboration when the person has drawn, layers to organize. Omit topic for the index.`,
+      inputSchema: { type: "object", properties: { topic: { type: "string", enum: SKILL_NAMES } }, additionalProperties: false },
+      execute: wrap((i) => {
         guideRead = true;
-        return { guide: GUIDE, tools: tools.map((t) => t.name) };
+        if (i.topic === undefined) return { index: skillIndex(), core: SKILLS.core.body, tools: tools.map((t) => t.name) };
+        const topic = requiredText(i.topic, "topic", 32);
+        const skill = SKILLS[topic];
+        if (!skill) throw new Error(`topic must be one of ${SKILL_NAMES.join(", ")}`);
+        return { topic, when: skill.when, skill: skill.body };
       }),
     },
     {
