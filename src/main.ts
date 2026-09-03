@@ -25,9 +25,9 @@ const PENS: PenKind[] = ["pencil", "fineliner", "marker", "brush", "highlighter"
 const STENCILS: StencilShape[] = ["rectangle", "triangle", "polygon"];
 const PAPERS: PaperKind[] = ["grid", "blank", "lined"];
 
-let theme: Theme = "charcoal";
+let theme: Theme = "paper";
 try {
-  if (localStorage.getItem("desk-theme") === "paper") theme = "paper";
+  if (localStorage.getItem("desk-theme") === "charcoal") theme = "charcoal";
 } catch {
   /* Drawing works without storage. */
 }
@@ -61,6 +61,8 @@ app.innerHTML = `
     <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
     <aside class="layers" id="layers" hidden aria-label="Layers"></aside>
     <div class="picker" id="picker" hidden></div>
+  </main>
+  <footer class="tray">
   <section class="strip" id="strip" hidden aria-label="Timeline">
     ${tool("play", "play", "Play or pause")}
     <span class="clock" id="clock">0.00 / 4.00</span>
@@ -71,8 +73,6 @@ app.innerHTML = `
     ${tool("loop", "loop", "Loop", 'aria-pressed="true"')}
     ${tool("onion", "onion", "Onion skin", 'aria-pressed="false"')}
   </section>
-  </main>
-  <footer class="tray">
     <div class="tray-inner">
       <div class="group" role="group" aria-label="Navigate">
         ${tool("mode-hand", "hand", "Hand: pan the sheet (hold space)", 'data-mode="hand"')}
@@ -87,7 +87,8 @@ app.innerHTML = `
         ${tool("mode-stencil", "stencil", "Stencil: drag a shape", 'data-mode="stencil"')}
       </div>
       <div class="group" role="group" aria-label="Sheet">
-        ${tool("undo", "undo", "Undo your last mark")}
+        ${tool("undo", "undo", "Undo (⌘Z)")}
+        ${tool("redo", "redo", "Redo (⌘⇧Z)")}
         ${tool("replay", "replay", "Replay the sheet being drawn")}
         ${tool("sheet", "grid", "Paper: grid, blank or lined")}
       </div>
@@ -204,7 +205,8 @@ canvas.addEventListener("pointerdown", () => {
 });
 instruments.onChange = renderPicker;
 renderPicker();
-document.querySelector("#undo")!.addEventListener("click", () => scene.undo("human"));
+document.querySelector("#undo")!.addEventListener("click", () => instruments.undo());
+document.querySelector("#redo")!.addEventListener("click", () => instruments.redo());
 document.querySelector("#replay")!.addEventListener("click", () => paper.replay());
 
 // Zoom and pan
@@ -273,6 +275,15 @@ window.addEventListener("keydown", (e) => {
     if (!strip.hidden) {
       e.preventDefault();
     }
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (e.shiftKey) instruments.redo();
+    else instruments.undo();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+    e.preventDefault();
+    instruments.redo();
   }
   if (e.key === "0" && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
@@ -421,7 +432,7 @@ function renderMenu() {
       <button type="button" class="mitem" data-act="save">${icon("save")}<span>Save</span><kbd>⌘S</kbd></button>
     </div>
     <div class="menu-row">
-      <button type="button" class="mitem" data-act="theme">${icon(theme === "charcoal" ? "blank" : "grid")}<span>${theme === "charcoal" ? "Paper theme" : "Charcoal theme"}</span></button>
+      <button type="button" class="mitem" data-act="theme">${icon("blank")}<span>${theme === "charcoal" ? "Paper theme" : "Charcoal theme"}</span></button>
     </div>
     <div class="menu-row">
       <button type="button" class="mitem" data-act="png">${icon("export")}<span>PNG</span></button>

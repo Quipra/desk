@@ -18,20 +18,20 @@
 }
 
 :root {
-  color-scheme: dark;
-  --desk: #1e201e;
-  --paper: #292c29;
-  --ink: #ebe8dc;
-  --muted: #acafa5;
-  --line: #454942;
-  --tray: #252825;
-  --agent: #b3b9ee;
+  color-scheme: light;
+  --desk: #ecebe6;
+  --paper: #fbfaf8;
+  --ink: #1b1a17;
+  --muted: #6a675f;
+  --line: #dedbd3;
+  --tray: #ffffff;
+  --agent: #5b5bd6;
   --agent-soft: color-mix(in srgb, var(--agent) 14%, transparent);
   --hover: color-mix(in srgb, var(--ink) 7%, transparent);
   --sans: "Geist", system-ui, sans-serif;
   --mono: "Geist Mono", ui-monospace, monospace;
   --pixel: "Geist Pixel", "Geist Mono", monospace;
-  --pill-shadow: 0 10px 30px -18px rgba(0, 0, 0, 0.6), 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent) inset;
+  --pill-shadow: 0 12px 32px -18px rgba(20, 18, 12, 0.35), 0 1px 2px rgba(20, 18, 12, 0.06);
 }
 
 * {
@@ -412,30 +412,26 @@ canvas {
   }
 }
 
-/* Timeline strip */
+/* Timeline: a compact transport beside the tray, never over the sheet */
 .strip {
-  position: absolute;
-  left: 50%;
-  bottom: 68px;
-  transform: translateX(-50%);
-  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: min(640px, calc(100% - 56px));
-  padding: 3px 6px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--tray) 94%, transparent);
+  gap: 4px;
+  width: 340px;
+  padding: 5px 8px;
+  border-radius: 18px;
+  background: var(--tray);
   border: 1px solid var(--line);
+  box-shadow: var(--pill-shadow);
 }
 .strip .tool {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
 }
 .strip .tool svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 .strip[hidden] {
   display: none;
@@ -444,13 +440,13 @@ canvas {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--muted);
-  min-width: 84px;
+  min-width: 78px;
   text-align: center;
 }
 .scrub {
   position: relative;
   flex: 1;
-  height: 30px;
+  height: 34px;
   display: flex;
   align-items: center;
 }
@@ -468,12 +464,12 @@ canvas {
 }
 .scrub input[type="range"]::-webkit-slider-thumb {
   appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -5.5px;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
   border-radius: 50%;
   background: var(--agent);
-  box-shadow: 0 0 0 3px var(--tray), 0 0 12px color-mix(in srgb, var(--agent) 60%, transparent);
+  box-shadow: 0 0 0 3px var(--tray);
 }
 .scrub input[type="range"]::-moz-range-track {
   height: 3px;
@@ -481,34 +477,37 @@ canvas {
   background: var(--line);
 }
 .scrub input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border: 0;
   border-radius: 50%;
   background: var(--agent);
 }
 .ticks {
   position: absolute;
-  left: 7px;
-  right: 7px;
+  left: 6px;
+  right: 6px;
   top: 50%;
   height: 0;
   pointer-events: none;
 }
 .ticks i {
   position: absolute;
-  top: -7px;
+  top: -5px;
   width: 2px;
-  height: 14px;
+  height: 10px;
   margin-left: -1px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--agent) 70%, transparent);
+  background: color-mix(in srgb, var(--agent) 55%, transparent);
 }
 
 /* Tray: a picker row for the active tool above the instruments */
 .tray {
   display: flex;
   justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
   padding: 0 20px max(16px, env(safe-area-inset-bottom));
 }
 .picker {
@@ -529,9 +528,7 @@ canvas {
     transform: translate(-50%, 0);
   }
 }
-.stage:has(.strip:not([hidden])) .picker {
-  bottom: 118px;
-}
+
 .tray-inner,
 .picker {
   display: flex;
@@ -592,6 +589,7 @@ canvas {
 .tool svg {
   width: 24px;
   height: 24px;
+  overflow: visible;
 }
 .tool:hover {
   background: var(--hover);
@@ -602,6 +600,9 @@ canvas {
 .tool.active {
   background: var(--agent-soft);
   color: var(--agent);
+}
+.tool.active svg {
+  filter: drop-shadow(0 0 0.4px currentColor);
 }
 .tool.text {
   width: auto;

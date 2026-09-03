@@ -134,14 +134,14 @@ test("edit restyles, moves, duplicates and regroups without redrawing", async ()
     { tool: "ruler", from: { x: 300, y: 300 }, to: { x: 300, y: 500 }, label: "left", group: "box", pen: { kind: "fineliner", color: "blue", dash: true } },
   ] });
   assert.equal(scene.items[1].pen.kind, "fineliner");
-  assert.equal(scene.items[1].pen.color, "#729bdf");
+  assert.equal(scene.items[1].pen.color, "#3b82f6");
   assert.equal(scene.items[1].pen.dash, true);
   const moved = await desk.call("edit", { group: "box", dx: 100, dy: 50, pen: { color: "accent" } }) as { edited: string[] };
   assert.equal(moved.edited.length, 2);
   const top = scene.items[0];
   if (top.kind !== "line") throw new Error("expected line");
   assert.deepEqual([top.from, top.to].map((p) => ({ x: p.x, y: p.y })), [{ x: 400, y: 350 }, { x: 600, y: 350 }]);
-  assert.equal(top.pen.color, "#dc716b");
+  assert.equal(top.pen.color, "#e5484d");
   const dup = await desk.call("edit", { ids: [top.id], duplicate: true, dy: 200, regroup: "copy" }) as { edited: string[] };
   assert.equal(scene.items.length, 3);
   assert.equal(scene.items[2].group, "copy");
@@ -165,7 +165,7 @@ test("make creates brushes and recipes the agent can reuse", async () => {
   assert.equal(scene.items[0].pen.brush, "inkwash");
   assert.equal(scene.items[0].pen.opacity, 0.5);
   assert.equal(scene.items[0].pen.taper, true);
-  assert.equal(scene.items[0].pen.color, "#729bdf");
+  assert.equal(scene.items[0].pen.color, "#3b82f6");
   assert.ok("error" in (await desk.call("draw", { points: [{ x: 1, y: 1 }], label: "x", pen: { brush: "nope" } }) as object));
 
   const steps = JSON.stringify([
@@ -277,7 +277,7 @@ test("the pen tool parses SVG path data into a vector mark that fills, crosses a
   const item = scene.get(leaf.id)!;
   if (item.kind !== "path") throw new Error("expected path");
   assert.deepEqual(item.segments.map((s) => s.c), ["M", "C", "C", "Z"]);
-  assert.equal(item.pen.fillColor, "#70ae87");
+  assert.equal(item.pen.fillColor, "#22a06b");
   assert.ok(leaf.bbox.x <= 300 && leaf.bbox.x + leaf.bbox.w >= 500);
   const rel = await desk.call("path", { d: "m 100 100 l 50 0 v 50 h -50 z", label: "box" }) as { id: string };
   const props = await desk.call("measure", { of: rel.id }) as { closed: boolean; d: string; length: number };

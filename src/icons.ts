@@ -1,82 +1,83 @@
-// Phosphor duotone icons, inlined at build time so the tray needs no requests.
-// They use currentColor, so they take the theme's ink.
+// Hand-drawn icons: Khushmeen Sidhu's Doodle Icons (CC0), vendored from the
+// MIT-licensed react-doodle-icons mirror and normalized to currentColor. A few
+// tiny marks that the set lacks are drawn here in the same spirit.
 
-import arrowClockwise from "@phosphor-icons/core/assets/duotone/arrow-clockwise-duotone.svg?raw";
-import arrowCounterClockwise from "@phosphor-icons/core/assets/duotone/arrow-counter-clockwise-duotone.svg?raw";
-import books from "@phosphor-icons/core/assets/duotone/books-duotone.svg?raw";
-import circleDashed from "@phosphor-icons/core/assets/duotone/circle-dashed-duotone.svg?raw";
-import compassTool from "@phosphor-icons/core/assets/duotone/compass-tool-duotone.svg?raw";
-import cornersOut from "@phosphor-icons/core/assets/duotone/corners-out-duotone.svg?raw";
-import dotsThree from "@phosphor-icons/core/assets/duotone/dots-three-duotone.svg?raw";
-import eraser from "@phosphor-icons/core/assets/duotone/eraser-duotone.svg?raw";
-import exportIcon from "@phosphor-icons/core/assets/duotone/export-duotone.svg?raw";
-import eye from "@phosphor-icons/core/assets/duotone/eye-duotone.svg?raw";
-import eyeSlash from "@phosphor-icons/core/assets/duotone/eye-slash-duotone.svg?raw";
-import filmStrip from "@phosphor-icons/core/assets/duotone/film-strip-duotone.svg?raw";
-import floppyDisk from "@phosphor-icons/core/assets/duotone/floppy-disk-duotone.svg?raw";
-import gridFour from "@phosphor-icons/core/assets/duotone/grid-four-duotone.svg?raw";
-import hand from "@phosphor-icons/core/assets/duotone/hand-duotone.svg?raw";
-import highlighter from "@phosphor-icons/core/assets/duotone/highlighter-duotone.svg?raw";
-import lineSegment from "@phosphor-icons/core/assets/duotone/line-segment-duotone.svg?raw";
-import markerCircle from "@phosphor-icons/core/assets/duotone/marker-circle-duotone.svg?raw";
-import minus from "@phosphor-icons/core/assets/bold/minus-bold.svg?raw";
-import noteBlank from "@phosphor-icons/core/assets/duotone/note-blank-duotone.svg?raw";
-import paintBrush from "@phosphor-icons/core/assets/duotone/paint-brush-duotone.svg?raw";
-import pause from "@phosphor-icons/core/assets/duotone/pause-duotone.svg?raw";
-import penNib from "@phosphor-icons/core/assets/duotone/pen-nib-duotone.svg?raw";
-import pencil from "@phosphor-icons/core/assets/duotone/pencil-duotone.svg?raw";
-import pentagon from "@phosphor-icons/core/assets/duotone/pentagon-duotone.svg?raw";
-import play from "@phosphor-icons/core/assets/duotone/play-duotone.svg?raw";
-import plus from "@phosphor-icons/core/assets/bold/plus-bold.svg?raw";
-import repeat from "@phosphor-icons/core/assets/duotone/repeat-duotone.svg?raw";
-import rows from "@phosphor-icons/core/assets/duotone/rows-duotone.svg?raw";
-import ruler from "@phosphor-icons/core/assets/duotone/ruler-duotone.svg?raw";
-import shapes from "@phosphor-icons/core/assets/duotone/shapes-duotone.svg?raw";
-import square from "@phosphor-icons/core/assets/duotone/square-duotone.svg?raw";
-import stackSimple from "@phosphor-icons/core/assets/duotone/stack-simple-duotone.svg?raw";
-import trash from "@phosphor-icons/core/assets/duotone/trash-duotone.svg?raw";
-import triangle from "@phosphor-icons/core/assets/duotone/triangle-duotone.svg?raw";
-import x from "@phosphor-icons/core/assets/duotone/x-duotone.svg?raw";
+import arrowLeft from "./doodle/arrow-circle-left.svg?raw";
+import arrowRight from "./doodle/arrow-circle-right.svg?raw";
+import copy from "./doodle/copy.svg?raw";
+import cross from "./doodle/cross.svg?raw";
+import del from "./doodle/delete.svg?raw";
+import diamond from "./doodle/diamond.svg?raw";
+import eraser from "./doodle/eraser.svg?raw";
+import floppy from "./doodle/floppy.svg?raw";
+import folder from "./doodle/folder.svg?raw";
+import grid from "./doodle/grid.svg?raw";
+import hand from "./doodle/hand.svg?raw";
+import hide from "./doodle/hide.svg?raw";
+import layer from "./doodle/layer.svg?raw";
+import list from "./doodle/list.svg?raw";
+import maximize from "./doodle/maximize.svg?raw";
+import clapper from "./doodle/movie-clapper.svg?raw";
+import navigation from "./doodle/navigation.svg?raw";
+import paintBrush from "./doodle/paint-brush-2.svg?raw";
+import pause from "./doodle/pause.svg?raw";
+import penTool from "./doodle/pen-tool.svg?raw";
+import pen from "./doodle/pen.svg?raw";
+import pencil3 from "./doodle/pencil-3.svg?raw";
+import pencil from "./doodle/pencil.svg?raw";
+import play from "./doodle/play.svg?raw";
+import rectangle from "./doodle/rectangle.svg?raw";
+import ruler from "./doodle/ruler.svg?raw";
+import shape from "./doodle/shape.svg?raw";
+import shuffle from "./doodle/shuffle.svg?raw";
+import square from "./doodle/square.svg?raw";
+import sync from "./doodle/sync.svg?raw";
+import target from "./doodle/target.svg?raw";
+import unhide from "./doodle/unhide.svg?raw";
+import upload from "./doodle/upload.svg?raw";
 
 const mark = (svg: string) => svg.replace("<svg ", '<svg aria-hidden="true" ');
+const doodle = (d: string) =>
+  `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
 
 export const ICONS = {
   hand: mark(hand),
   pencil: mark(pencil),
-  fineliner: mark(penNib),
-  marker: mark(markerCircle),
+  fineliner: mark(penTool),
+  marker: mark(pen),
   brush: mark(paintBrush),
-  highlighter: mark(highlighter),
+  highlighter: mark(pencil3),
   eraser: mark(eraser),
   ruler: mark(ruler),
-  compass: mark(compassTool),
-  stencil: mark(shapes),
-  rectangle: mark(square),
-  triangle: mark(triangle),
-  polygon: mark(pentagon),
-  undo: mark(arrowCounterClockwise),
-  replay: mark(arrowClockwise),
+  compass: mark(target),
+  stencil: mark(shape),
+  rectangle: mark(rectangle),
+  triangle: mark(navigation),
+  polygon: mark(diamond),
+  undo: mark(arrowLeft),
+  redo: mark(arrowRight),
+  replay: mark(sync),
   play: mark(play),
   pause: mark(pause),
-  loop: mark(repeat),
-  onion: mark(circleDashed),
-  grid: mark(gridFour),
-  lined: mark(rows),
-  blank: mark(noteBlank),
-  dash: mark(dotsThree),
-  solid: mark(lineSegment),
-  plus: mark(plus),
-  minus: mark(minus),
-  fit: mark(cornersOut),
-  export: mark(exportIcon),
-  video: mark(filmStrip),
-  save: mark(floppyDisk),
-  library: mark(books),
-  trash: mark(trash),
-  close: mark(x),
-  eye: mark(eye),
-  eyeOff: mark(eyeSlash),
-  front: mark(stackSimple),
+  loop: mark(shuffle),
+  onion: mark(copy),
+  grid: mark(grid),
+  lined: mark(list),
+  blank: mark(square),
+  dash: doodle('<path d="M3.5 12.6c1.4-.4 2.4-.3 3.6 0"/><path d="M10.2 12.2c1.3-.5 2.3-.3 3.6.1"/><path d="M16.9 12.5c1.3-.4 2.4-.2 3.6.2"/>'),
+  solid: doodle('<path d="M3.5 12.8c3-.9 5.9-.4 8.6-.2 2.8.2 5.6-.6 8.4-.3"/>'),
+  plus: doodle('<path d="M12 5.2c.3 4.5-.2 9 .1 13.6"/><path d="M5.2 12.1c4.6-.4 9 .2 13.6-.1"/>'),
+  minus: doodle('<path d="M5.2 12.3c4.6-.5 9 .2 13.6-.2"/>'),
+  fit: mark(maximize),
+  export: mark(upload),
+  video: mark(clapper),
+  save: mark(floppy),
+  library: mark(folder),
+  trash: mark(del),
+  close: mark(cross),
+  eye: mark(unhide),
+  eyeOff: mark(hide),
+  front: mark(layer),
 } as const;
 
 export type IconName = keyof typeof ICONS;

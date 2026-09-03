@@ -18,6 +18,10 @@ export class Instruments {
   private points: Pt[] = [];
   private pointerId: number | null = null;
   onChange: (() => void) | null = null;
+  // The person's own history: adds and erasures, undone and redone in order.
+  private history: HistoryOp[] = [];
+  private future: HistoryOp[] = [];
+  private erasing: { item: Item; index: number }[] | null = null;
 
   constructor(paper: Paper, scene: Scene) {
     this.paper = paper;
@@ -77,7 +81,10 @@ export class Instruments {
     this.paper.canvas.setPointerCapture(e.pointerId);
     this.down = p;
     this.points = [p];
-    if (this.mode === "eraser") this.eraseAt(p);
+    if (this.mode === "eraser") {
+      this.erasing = [];
+      this.eraseAt(p);
+    }
     this.paper.preview = this.previewItem(p);
     this.paper.invalidate();
   }
@@ -114,15 +121,46 @@ export class Instruments {
     this.paper.preview = null;
     this.down = null;
     this.releasePointer();
+    if (this.erasing) {
+      if (this.erasing.length) this.record({ type: "erase", removed: this.erasing });
+      this.erasing = null;
+    }
     if (item && this.meaningful(item)) {
       const { id: _id, ...rest } = item;
-      this.scene.add(rest, { label: rest.label, author: "human", pen: rest.pen });
+      const added = this.scene.add(rest, { label: rest.label, author: "human", pen: rest.pen });
+      this.record({ type: "add", item: added });
     } else {
       this.paper.invalidate();
     }
   }
 
+  private record(op: HistoryOp) {
+    this.history.push(op);
+    if (this.history.length > 200) this.history.shift();
+    this.future = [];
+  }
+
+  undo(): boolean {
+    const op = this.history.pop();
+    if (!op) return false;
+    if (op.type === "add") this.scene.remove([op.item.id]);
+    else for (const { item, index } of op.removed) this.scene.insert(item, index);
+    this.future.push(op);
+    return true;
+  }
+
+  redo(): boolean {
+    const op = this.future.pop();
+    if (!op) return false;
+    if (op.type === "add") this.scene.insert(op.item);
+    else this.scene.remove(op.removed.map((r) => r.item.id));
+    this.history.push(op);
+    return true;
+  }
+
   private cancel() {
+    if (this.erasing?.length) this.record({ type: "erase", removed: this.erasing });
+    this.erasing = null;
     this.down = null;
     this.releasePointer();
     this.paper.preview = null;
@@ -171,10 +209,14 @@ export class Instruments {
   }
 
   private eraseAt(p: Pt) {
-    const hit = this.scene.items.filter((item) => hits(item, p));
-    if (hit.length > 0) this.scene.remove(hit.map((i) => i.id));
+    const hit = this.scene.items.map((item, index) => ({ item, index })).filter(({ item }) => hits(item, p));
+    if (hit.length === 0) return;
+    this.erasing?.push(...hit);
+    this.scene.remove(hit.map((h) => h.item.id));
   }
 }
+
+type HistoryOp = { type: "add"; item: Item } | { type: "erase"; removed: { item: Item; index: number }[] };
 
 function hits(item: Item, p: Pt): boolean {
   const b = bbox(item);

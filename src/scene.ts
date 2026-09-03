@@ -86,17 +86,17 @@ export const PEN_PRESETS: Record<PenKind, Pen> = {
   fineliner: { kind: "fineliner", color: "auto", width: 2, opacity: 1 },
   marker: { kind: "marker", color: "auto", width: 6, opacity: 0.85 },
   brush: { kind: "brush", color: "auto", width: 9, opacity: 0.8 },
-  highlighter: { kind: "highlighter", color: "#cda361", width: 18, opacity: 0.35 },
+  highlighter: { kind: "highlighter", color: "#f59e0b", width: 18, opacity: 0.3 },
 };
 
 /** Named inks. "ink" follows the paper theme; the rest are fixed so figures stay consistent. */
 export const PALETTE: Record<string, string> = {
   ink: "auto",
   auto: "auto",
-  accent: "#dc716b",
-  blue: "#729bdf",
-  green: "#70ae87",
-  ochre: "#cda361",
+  accent: "#e5484d",
+  blue: "#3b82f6",
+  green: "#22a06b",
+  ochre: "#f59e0b",
 };
 
 type Listener = (event: SceneEvent) => void;
@@ -159,6 +159,14 @@ export class Scene {
     this.items.push(item);
     this.emit({ type: "add", item });
     return item;
+  }
+
+  /** Put a previously removed item back, keeping its id, at its old index when possible. */
+  insert(item: Item, index?: number) {
+    if (this.items.some((i) => i.id === item.id)) return;
+    const at = index === undefined ? this.items.length : Math.max(0, Math.min(this.items.length, index));
+    this.items.splice(at, 0, item);
+    this.emit({ type: "add", item });
   }
 
   /** Replace items in place (same ids), then notify renderers. */

@@ -58,11 +58,11 @@ Designed for few round-trips. A typical figure is one `look`, one `construct` wi
 
 Tool schemas stay inside the JSON Schema subset chat hosts accept for tool definitions (type, properties, required, enum, items, description, additionalProperties). Ranges are validated in code. A test guards this, because a single `oneOf` or `minimum` makes a tool unusable in ChatGPT.
 
-Agent marks reveal progressively with a glow, then settle into plain ink. The **replay** button redraws the whole sheet in order. Charcoal is the default theme with a light-paper toggle; `color: "auto"` follows the theme.
+Agent marks reveal progressively with a glow, then settle into plain ink. The **replay** button redraws the whole sheet in order. Paper is the default theme with a charcoal toggle in the DESK menu; `color: "auto"` follows the theme. The tray's hand-drawn icons are [Doodle Icons by Khushmeen Sidhu](https://khushmeen.com/icons.html) (CC0), vendored under `src/doodle/`.
 
 ## For the person at the desk
 
-A FigJam-style tray: hand, pen, eraser, ruler, compass, stencil, undo, replay, paper. The row above it holds the active tool's options: five pen kinds, three widths, dash, five inks and a custom color; stencil shapes; paper types. Pinch or ⌘-wheel to zoom, wheel or hand to pan, ⌘0 to fit. The DESK mark opens a menu: new sheet, save (⌘S) to a library kept in the browser, export PNG, SVG, or one loop of the animation as WebM.
+A hand-drawn tray: hand, pen, eraser, ruler, compass, stencil, undo and redo (⌘Z, ⌘⇧Z), replay, paper. The row above it holds the active tool's options: five pen kinds, three widths, dash, five inks and a custom color; stencil shapes; paper types. Pinch or ⌘-wheel to zoom, wheel or hand to pan, ⌘0 to fit. The DESK mark opens a menu: new sheet, save (⌘S) to a library kept in the browser, export PNG, SVG, or one loop of the animation as WebM.
 
 ## Run locally
 
@@ -102,7 +102,7 @@ await desk.call("construct", { verify: true, steps: [
 - `src/main.ts` — the tray, pickers, menu, zoom, strip and layers UI
 - `src/export.ts` — PNG, SVG and WebM exporters
 - `src/library.ts` — saved sheets in the browser
-- `src/icons.ts` — the tray's line icons
+- `src/icons.ts` — the tray's icons, from the vendored doodle set in `src/doodle/`
 - `src/skills.ts` — the skills the `guide` tool serves; `skills/` is generated from it by `npm run skills`
 
 MIT.
