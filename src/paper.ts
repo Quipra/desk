@@ -58,6 +58,8 @@ export class Paper {
   private boilSeed = 0;
   /** A temporary item drawn on top while a person is mid-gesture. */
   preview: Item | null = null;
+  /** Drawn last, in paper coordinates, for selection boxes and pen-tool handles. */
+  overlay: ((ctx: CanvasRenderingContext2D, view: { k: number; scale: number }) => void) | null = null;
   onActivity: ((active: boolean) => void) | null = null;
   /** Zoom factor and pan offset in CSS pixels, applied on top of the fit scale. */
   view = { k: 1, x: 0, y: 0 };
@@ -446,6 +448,11 @@ export class Paper {
     }
     if (this.preview) this.drawItem(ctx, this.preview, 1);
     if (this.tip) this.drawTip(ctx, this.tip, now);
+    if (this.overlay) {
+      ctx.save();
+      this.overlay(ctx, { k: this.view.k, scale: this.scale });
+      ctx.restore();
+    }
   }
 
   /** Draw a mark where its motion puts it at the current time. */

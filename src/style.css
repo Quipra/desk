@@ -326,6 +326,20 @@ canvas {
   cursor: crosshair;
 }
 
+/* Inspector panel: filled in by inspector.css */
+.inspector {
+  position: absolute;
+  right: 28px;
+  bottom: 14px;
+  width: 240px;
+  max-height: calc(100% - 28px);
+  overflow: auto;
+  z-index: 3;
+}
+.inspector[hidden] {
+  display: none;
+}
+
 /* Layers panel */
 .layers {
   position: absolute;

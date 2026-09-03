@@ -4,7 +4,8 @@
 import type { Paper } from "./paper.ts";
 import { bbox, clampPt, PEN_PRESETS, type Item, type Pen, type PenKind, type Pt, type Scene, type StencilShape } from "./scene.ts";
 
-export type Mode = "hand" | "pen" | "eraser" | "ruler" | "compass" | "stencil";
+// "select" and "path" are handled by select.ts and pentool.ts; Instruments ignores their gestures.
+export type Mode = "hand" | "select" | "path" | "pen" | "eraser" | "ruler" | "compass" | "stencil";
 
 const ERASE_RADIUS = 14;
 
@@ -74,7 +75,7 @@ export class Instruments {
   }
 
   private start(e: PointerEvent) {
-    if (e.button !== 0 || this.pointerId !== null || e.isPrimary === false || this.mode === "hand") return;
+    if (e.button !== 0 || this.pointerId !== null || e.isPrimary === false || this.mode === "hand" || this.mode === "select" || this.mode === "path") return;
     const p = this.pt(e);
     e.preventDefault();
     this.pointerId = e.pointerId;
@@ -218,7 +219,7 @@ export class Instruments {
 
 type HistoryOp = { type: "add"; item: Item } | { type: "erase"; removed: { item: Item; index: number }[] };
 
-function hits(item: Item, p: Pt): boolean {
+export function hits(item: Item, p: Pt): boolean {
   const b = bbox(item);
   const r = ERASE_RADIUS;
   if (p.x < b.x - r || p.x > b.x + b.w + r || p.y < b.y - r || p.y > b.y + b.h + r) return false;

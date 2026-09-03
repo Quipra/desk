@@ -8,6 +8,9 @@ import { keyTimes } from "./motion.ts";
 import { Paper } from "./paper.ts";
 import { PALETTE, PEN_PRESETS, Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
 import { registerDesk } from "./webmcp.ts";
+import { mountSelect } from "./select.ts";
+import { mountInspector } from "./inspector.ts";
+import { mountPenTool } from "./pentool.ts";
 
 const COLORS: [string, string][] = [
   [PALETTE.ink, "ink"],
@@ -60,6 +63,7 @@ app.innerHTML = `
     <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
     <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
     <aside class="layers" id="layers" hidden aria-label="Layers"></aside>
+    <aside class="inspector" id="inspector" hidden aria-label="Inspector"></aside>
     <div class="picker" id="picker" hidden></div>
   </main>
   <footer class="tray">
@@ -75,10 +79,12 @@ app.innerHTML = `
   </section>
     <div class="tray-inner">
       <div class="group" role="group" aria-label="Navigate">
+        ${tool("mode-select", "select", "Select: click or drag a box, then move, scale, rotate (V)", 'data-mode="select"')}
         ${tool("mode-hand", "hand", "Hand: pan the sheet (hold space)", 'data-mode="hand"')}
       </div>
       <div class="group" role="group" aria-label="Draw">
         ${tool("mode-pen", "pencil", "Pen", 'data-mode="pen" class="tool active"')}
+        ${tool("mode-path", "pentool", "Pen tool: click for corners, drag for curves, Enter to finish (P)", 'data-mode="path"')}
         ${tool("mode-eraser", "eraser", "Eraser", 'data-mode="eraser"')}
       </div>
       <div class="group" role="group" aria-label="Instruments">
@@ -189,7 +195,7 @@ for (const b of modeButtons) {
     sheetPicker = false;
     pickerOpen = again ? !pickerOpen : true;
     instruments.setMode(mode);
-    canvas.style.cursor = mode === "hand" ? "grab" : "crosshair";
+    canvas.style.cursor = mode === "hand" ? "grab" : mode === "select" ? "default" : "crosshair";
   });
 }
 sheetBtn.addEventListener("click", () => {
@@ -418,6 +424,42 @@ function syncLayers() {
   title.textContent = "layers";
   layersEl.replaceChildren(title, ...rows);
 }
+
+// Designer tools: selection with handles, the inspector for whatever is selected, and a Bézier pen.
+const inspectorHost = document.querySelector<HTMLElement>("#inspector")!;
+const selection = mountSelect({
+  scene,
+  paper,
+  instruments,
+  canvas,
+  onSelection: (ids) => {
+    inspectorHost.hidden = ids.length === 0;
+    inspector.refresh();
+  },
+});
+const inspector = mountInspector({ scene, paper, instruments, host: inspectorHost, selection: () => selection.selected() });
+const penTool = mountPenTool({ scene, paper, instruments, canvas });
+scene.on(() => inspector.refresh());
+window.addEventListener("keydown", (e) => {
+  const typing = (e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "SELECT";
+  if (typing) return;
+  if ((e.key === "Delete" || e.key === "Backspace") && instruments.mode === "select") {
+    e.preventDefault();
+    selection.deleteSelected();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d" && instruments.mode === "select") {
+    e.preventDefault();
+    selection.duplicateSelected();
+  }
+  if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+    if (e.key === "v") document.querySelector<HTMLButtonElement>("#mode-select")!.click();
+    if (e.key === "p") document.querySelector<HTMLButtonElement>("#mode-path")!.click();
+    if (e.key === "b") document.querySelector<HTMLButtonElement>("#mode-pen")!.click();
+    if (e.key === "e") document.querySelector<HTMLButtonElement>("#mode-eraser")!.click();
+    if (e.key === "h") document.querySelector<HTMLButtonElement>("#mode-hand")!.click();
+  }
+  if (e.key === "Escape") penTool.cancel();
+});
 
 // Menu under the wordmark: new, save, export, and the library of saved sheets.
 const menu = document.querySelector<HTMLElement>("#menu")!;

@@ -40,6 +40,10 @@ export interface Pen {
   scatter?: number;
   /** Paper grain strength 0..1 (overrides the kind's default). */
   grain?: number;
+  /** Effects, rendered around the mark. Offsets and blurs in paper units. */
+  shadow?: { dx: number; dy: number; blur: number; color: string };
+  glow?: { blur: number; color: string };
+  blur?: number;
 }
 
 export interface Pt {

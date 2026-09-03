@@ -42,6 +42,8 @@ const doodle = (d: string) =>
 
 export const ICONS = {
   hand: mark(hand),
+  select: doodle('<path d="M6 4.5c.4 4.9.6 9.8 1.2 14.6l3.3-3.4 2.6 4.6 2.2-1.2-2.5-4.5 4.6-.6z"/>'),
+  pentool: mark(penTool),
   pencil: mark(pencil),
   fineliner: mark(penTool),
   marker: mark(pen),
