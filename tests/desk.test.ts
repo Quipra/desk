@@ -70,7 +70,7 @@ test("registration classifies three read tools and eleven state-changing tools",
   assert.equal(desk.connected, true);
   assert.deepEqual(registered.filter((tool) => tool.annotations?.readOnlyHint === true).map((tool) => tool.name), ["guide", "look", "measure"]);
   assert.deepEqual(registered.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name), [
-    "pick_pen", "draw", "ruler", "compass", "stencil", "edit", "erase", "undo", "new_sheet", "make", "construct",
+    "pick_pen", "draw", "ruler", "compass", "stencil", "edit", "erase", "undo", "timeline", "make", "construct",
   ]);
   assert.equal(registered.filter((tool) => typeof tool.annotations?.readOnlyHint !== "boolean").length, 0);
   desk.dispose();
@@ -208,6 +208,65 @@ test("recipe expressions evaluate safely", async () => {
   assert.deepEqual(substitute({ center: "$A", radius: "$r*2", label: "plain text", pen: { dash: true } }, params), { center: { x: 100, y: 200 }, radius: 100, label: "plain text", pen: { dash: true } });
 });
 
+test("keyframes are edits at a time, with easing, wiggle, presets and a timeline", async () => {
+  installDocument({ registerTool() {} });
+  const scene = new Scene();
+  const desk = await registerDesk(scene, idlePaper(), { onActivity() {} });
+  const ball = await desk.call("compass", { center: { x: 200, y: 400 }, radius: 40, label: "ball", group: "ball" }) as { id: string };
+  await desk.call("edit", { group: "ball", at: 0, dx: 0 });
+  const k1 = await desk.call("edit", { group: "ball", at: 1, dx: 400, ease: "easeOut" }) as { animated: string[]; timeline: { duration: number; keyTimes: number[] } };
+  assert.deepEqual(k1.animated, [ball.id]);
+  assert.deepEqual(k1.timeline.keyTimes, [0, 1]);
+  await desk.call("edit", { ids: [ball.id], at: 2, dx: 400, dy: -150, rotate: 90, opacity: 0.5, bezier: [0.4, 0, 0.2, 1] });
+  await desk.call("edit", { ids: [ball.id], at: 6, dx: 0, ease: "bounce" });
+  assert.equal(scene.timeline.duration, 6, "the timeline grows to hold the last key");
+  const { poseAt } = await import("../src/motion.ts");
+  const item = scene.get(ball.id)!;
+  assert.equal(poseAt(item, 0).transform.dx, undefined, "the key at 0 is the rest pose for x");
+  assert.equal(poseAt(item, 0).transform.dy, -150, "a channel holds its own first key, so dy is already -150 at 0");
+  const mid = poseAt(item, 0.5);
+  assert.ok(mid.transform.dx! > 200 && mid.transform.dx! < 400, `easeOut is ahead of linear at the midpoint: ${mid.transform.dx}`);
+  assert.equal(poseAt(item, 1).transform.dx, 400);
+  const two = poseAt(item, 2);
+  assert.equal(two.transform.dy, -150);
+  assert.equal(two.transform.rotate, 90);
+  assert.equal(two.opacity, 0.5);
+  assert.equal(poseAt(item, 6).transform.dx, undefined, "back to rest x by the last key");
+  const seen = await desk.call("look", { at: 1 }) as { at: number; items: { bbox: { x: number } }[]; timeline: { keyTimes: number[] } };
+  assert.equal(seen.at, 1);
+  assert.equal(seen.items[0].bbox.x, Math.round(200 + 400 - 40 - 2.5), "look at a time reports the posed bounds");
+  assert.deepEqual(seen.timeline.keyTimes, [0, 1, 2, 6]);
+
+  await desk.call("edit", { group: "ball", wiggle: { amp: 12, freq: 3 }, boil: 6 });
+  assert.deepEqual(scene.get(ball.id)!.motion?.wiggle, { amp: 12, freq: 3 });
+  assert.equal(scene.get(ball.id)!.motion?.boil, 6);
+  const w1 = poseAt(scene.get(ball.id)!, 1.5);
+  const w2 = poseAt(scene.get(ball.id)!, 1.5);
+  assert.deepEqual(w1, w2, "wiggle is deterministic");
+  assert.ok(Math.abs(w1.transform.dx! - 400) <= 12 && w1.transform.dx !== 400, "wiggle drifts within its amplitude");
+
+  const made = await desk.call("make", { kind: "motion", name: "pop-in", motion: JSON.stringify({ keys: [{ at: 0, scale: 0, opacity: 0 }, { at: 0.4, scale: 1.1, ease: "easeOut" }, { at: 0.6, scale: 1 }] }) }) as { made: string; keys: number };
+  assert.equal(made.keys, 3);
+  const box = await desk.call("stencil", { shape: "rectangle", x: 600, y: 600, w: 100, h: 60, label: "box" }) as { id: string };
+  const applied = await desk.call("edit", { ids: [box.id], preset: "pop-in", at: 2 }) as { keyframes: Record<string, number[]> };
+  assert.deepEqual(applied.keyframes[box.id], [2, 2.4, 2.6]);
+  assert.equal(poseAt(scene.get(box.id)!, 2).opacity, 0);
+  assert.equal(poseAt(scene.get(box.id)!, 1).opacity, 0, "before its first key a mark holds that key, so pop-in stays hidden");
+  assert.equal(poseAt(scene.get(box.id)!, 2.6).transform.scale, undefined, "scale 1 is rest");
+
+  const tl = await desk.call("timeline", { action: "set", fps: 24, loop: false, duration: 8 }) as { fps: number; loop: boolean; duration: number; animated: boolean };
+  assert.deepEqual([tl.fps, tl.loop, tl.duration, tl.animated], [24, false, 8, true]);
+  const sought = await desk.call("timeline", { action: "seek", at: 2.5 }) as { time: number };
+  assert.equal(sought.time, 2.5);
+  assert.ok("error" in (await desk.call("edit", { ids: [ball.id], at: 1 }) as object), "a keyframe needs a change");
+  assert.ok("error" in (await desk.call("edit", { ids: [ball.id], at: 1, dx: 5, ease: "zoom" }) as object));
+  await desk.call("edit", { group: "ball", clearMotion: true });
+  assert.equal(scene.get(ball.id)!.motion, undefined);
+  const cleared = await desk.call("timeline", { action: "clear", paper: "blank" }) as { animated: boolean };
+  assert.equal(cleared.animated, false);
+  assert.equal(scene.items.length, 0);
+});
+
 test("first look carries the guide once and later looks report what changed", async () => {
   installDocument({ registerTool() {} });
   const scene = new Scene();
@@ -243,7 +302,7 @@ test("construct runs steps in order with the shared pen and stops at the first b
   assert.match(result.error ?? "", /^step 3 \(ruler\): from\.x/);
   assert.equal(scene.items.length, 2);
   assert.equal(scene.items[0].pen.width, 5);
-  assert.deepEqual(await desk.call("construct", { steps: [{ tool: "guide" }] }), { done: 0, results: [], error: "step 0: tool must be one of pick_pen, draw, ruler, compass, stencil, edit, erase, undo, recipe" });
+  assert.deepEqual(await desk.call("construct", { steps: [{ tool: "guide" }] }), { done: 0, results: [], error: "step 0: tool must be one of pick_pen, draw, ruler, compass, stencil, edit, erase, undo, timeline, recipe" });
   const guide = await desk.call("guide") as { guide: string; tools: string[] };
   assert.ok(guide.guide.includes("1200 wide x 800 tall"));
   assert.equal(guide.tools.length, 14);
@@ -493,7 +552,8 @@ function installDocument(modelContext: { registerTool(tool: { name: string }): v
 }
 
 function idlePaper(): Paper {
-  return { busy: false, whenIdle: () => Promise.resolve() } as Paper;
+  const p = { busy: false, time: 0, playing: false, theme: "charcoal", whenIdle: () => Promise.resolve(), play() { p.playing = true; }, pause() { p.playing = false; }, seek(t: number) { p.time = t; } };
+  return p as unknown as Paper;
 }
 
 function paperHarness() {

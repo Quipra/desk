@@ -41,9 +41,11 @@ Fourteen tools registered with `document.modelContext.registerTool` (with a `nav
 | `edit` | Change existing marks without redrawing: restyle, move, scale, rotate, relabel, regroup, duplicate (paste) |
 | `erase` | By ids, group, or region |
 | `undo` | Lift the agent's last mark |
-| `new_sheet` | Fresh paper: blank, grid, or lined |
-| `make` | The agent's own tools: a named brush it designs, or a recipe of construct steps with `$params` and expressions |
+| `timeline` | The sheet's clock: play, pause, seek, duration, fps, loop, onion skin, or a fresh sheet |
+| `make` | The agent's own tools: a brush it designs, a recipe of construct steps with `$params` and expressions, or a motion preset it can apply anywhere |
 | `construct` | Up to 40 instrument steps in one call, including recipes. `verify: true` returns the sheet in the same result |
+
+**Animation.** A keyframe is an edit at a time: `edit { group: "ball", at: 1.5, dx: 300, ease: "easeOut" }`. Keyable: position, scale, rotation, opacity, and reveal (write-on). Curves: linear, ease, easeIn, easeOut, easeInOut, bounce, or a cubic bezier. Wiggle adds smooth drift; boil re-noises edges like hand-drawn animation. The agent can name a motion preset with `make` and apply it to any marks. Playback starts when keys are added; a scrubber with keyframe ticks, loop, and onion skin appears under the paper. `look { at }` reports where every mark is at a time.
 
 Five pens: pencil, fineliner, marker, brush, highlighter. Every pen can be dashed, tapered, textured (grain or chalk), and can fill closed shapes and circles with hatch, crosshatch, or stipple. Colors by name (ink, accent, blue, green, ochre) or hex. The paper is 1200 × 800 units, origin top-left. There is no text tool: labels are hand-drawn with `draw` and `strokes`, and the guide tells the agent how.
 
@@ -83,6 +85,7 @@ await desk.call("construct", { verify: true, steps: [
 - `src/webmcp.ts` — the agent's fourteen tools, validation and lifecycle
 - `src/geometry.ts` — exact intersections and mark properties for `measure`
 - `src/recipes.ts` — the expression evaluator behind agent-made recipes
+- `src/motion.ts` — keyframes, easing, wiggle: where a mark is at a time
 - `src/guide.ts` — what the `guide` tool returns
 - `src/look.ts` — how the agent sees the sheet
 - `src/appearance.ts` — theme palette shared by DOM and canvas

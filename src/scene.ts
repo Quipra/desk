@@ -46,6 +46,17 @@ interface Base {
   pen: Pen;
   /** Optional name shared by marks that belong together, like a layer. */
   group?: string;
+  /** Keyframes and procedural motion, when the mark moves over the timeline. */
+  motion?: import("./motion.ts").Motion;
+}
+
+export interface Timeline {
+  /** Seconds. */
+  duration: number;
+  fps: number;
+  loop: boolean;
+  /** Tracing paper: show the previous frame faintly while scrubbing. */
+  onion: boolean;
 }
 
 export type Geometry =
@@ -86,14 +97,40 @@ export type SceneEvent =
   | { type: "add"; item: Item }
   | { type: "remove"; ids: string[] }
   | { type: "change"; ids: string[] }
+  | { type: "motion"; ids: string[] }
   | { type: "clear" }
-  | { type: "paper"; paper: PaperKind };
+  | { type: "paper"; paper: PaperKind }
+  | { type: "timeline"; timeline: Timeline };
 
 export class Scene {
   items: Item[] = [];
   paper: PaperKind = "grid";
+  timeline: Timeline = { duration: 4, fps: 12, loop: true, onion: false };
   private counter = 0;
   private listeners = new Set<Listener>();
+
+  /** True when any mark has keyframes or procedural motion. */
+  get animated(): boolean {
+    return this.items.some((i) => i.motion && (i.motion.keys.length > 0 || i.motion.wiggle || i.motion.boil));
+  }
+
+  setTimeline(patch: Partial<Timeline>) {
+    this.timeline = { ...this.timeline, ...patch };
+    this.emit({ type: "timeline", timeline: this.timeline });
+  }
+
+  /** Replace motion on items in place, then notify players. */
+  setMotion(next: Item[]) {
+    const ids: string[] = [];
+    for (const item of next) {
+      const at = this.items.findIndex((i) => i.id === item.id);
+      if (at === -1) continue;
+      this.items[at] = item;
+      ids.push(item.id);
+    }
+    if (ids.length) this.emit({ type: "motion", ids });
+    return ids;
+  }
 
   on(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -153,6 +190,7 @@ export class Scene {
   clear(paper?: PaperKind) {
     this.items = [];
     if (paper) this.paper = paper;
+    this.timeline = { ...this.timeline, duration: 4 };
     this.emit({ type: "clear" });
   }
 

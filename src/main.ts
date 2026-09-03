@@ -4,6 +4,7 @@ import { Instruments, type Mode } from "./instruments.ts";
 import { Paper } from "./paper.ts";
 import { PALETTE, Scene, type PaperKind, type PenKind, type StencilShape } from "./scene.ts";
 import { registerDesk } from "./webmcp.ts";
+import { keyTimes } from "./motion.ts";
 
 const COLORS = [PALETTE.ink, PALETTE.accent, PALETTE.blue, PALETTE.green, PALETTE.ochre];
 const COLOR_NAMES = ["ink · follows paper theme", "accent", "blue", "green", "ochre"];
@@ -26,6 +27,16 @@ app.innerHTML = `
     <p class="sr-only" id="paper-status" aria-live="polite">The grid sheet is empty.</p>
     <div class="hint" id="hint"><span>a shared sheet. draw on it, or ask your agent to.</span></div>
   </main>
+  <section class="strip" id="strip" hidden aria-label="Timeline">
+    <button type="button" class="tool" id="play" aria-label="Play or pause">play</button>
+    <span class="clock" id="clock">0.00 / 4.00</span>
+    <div class="scrub">
+      <input type="range" id="scrub" min="0" max="4" step="0.01" value="0" aria-label="Scrub the timeline" />
+      <div class="ticks" id="ticks" aria-hidden="true"></div>
+    </div>
+    <button type="button" class="tool" id="loop" aria-pressed="true">loop</button>
+    <button type="button" class="tool" id="onion" aria-pressed="false">onion</button>
+  </section>
   <footer class="tray">
     <div class="tray-inner">
       <div class="group" id="pens" role="group" aria-label="Pens">
@@ -148,6 +159,49 @@ scene.on((e) => {
   }
   hint.hidden = scene.items.length > 0;
   paperStatus.textContent = `The ${scene.paper} sheet has ${scene.items.length} ${scene.items.length === 1 ? "mark" : "marks"}.`;
+});
+
+// Timeline strip: appears once anything moves.
+const strip = document.querySelector<HTMLElement>("#strip")!;
+const playBtn = document.querySelector<HTMLButtonElement>("#play")!;
+const clock = document.querySelector<HTMLElement>("#clock")!;
+const scrub = document.querySelector<HTMLInputElement>("#scrub")!;
+const ticks = document.querySelector<HTMLElement>("#ticks")!;
+const loopBtn = document.querySelector<HTMLButtonElement>("#loop")!;
+const onionBtn = document.querySelector<HTMLButtonElement>("#onion")!;
+function syncStrip() {
+  const { duration, loop, onion } = scene.timeline;
+  strip.hidden = !scene.animated;
+  scrub.max = String(duration);
+  loopBtn.classList.toggle("active", loop);
+  loopBtn.setAttribute("aria-pressed", String(loop));
+  onionBtn.classList.toggle("active", onion);
+  onionBtn.setAttribute("aria-pressed", String(onion));
+  ticks.replaceChildren(...keyTimes(scene.items).map((t) => {
+    const el = document.createElement("i");
+    el.style.left = `${(t / duration) * 100}%`;
+    return el;
+  }));
+}
+paper.onTime = (time, playing) => {
+  scrub.value = String(time);
+  clock.textContent = `${time.toFixed(2)} / ${scene.timeline.duration.toFixed(2)}`;
+  playBtn.textContent = playing ? "pause" : "play";
+};
+playBtn.addEventListener("click", () => paper.toggle());
+scrub.addEventListener("input", () => {
+  if (paper.playing) paper.pause();
+  paper.seek(Number(scrub.value));
+});
+loopBtn.addEventListener("click", () => scene.setTimeline({ loop: !scene.timeline.loop }));
+onionBtn.addEventListener("click", () => scene.setTimeline({ onion: !scene.timeline.onion }));
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" || strip.hidden || (e.target as HTMLElement)?.tagName === "INPUT") return;
+  e.preventDefault();
+  paper.toggle();
+});
+scene.on((e) => {
+  if (e.type === "motion" || e.type === "timeline" || e.type === "clear" || e.type === "remove") syncStrip();
 });
 
 // Pointer readout in paper units, useful when talking to the agent about positions.

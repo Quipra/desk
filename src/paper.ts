@@ -7,8 +7,9 @@
 // glowing. Reveal durations share a time budget per batch, so a whole
 // construct call lands in about two seconds no matter how many marks it has.
 
-import { bbox, clampPt, PAPER_H, PAPER_W, shapeVertices, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
+import { bbox, clampPt, PAPER_H, PAPER_W, shapeVertices, transformItem, type Item, type Pen, type Pt, type Scene } from "./scene.ts";
 import { inkColor, THEMES, type Theme } from "./appearance.ts";
+import { poseAt, type Pose } from "./motion.ts";
 
 const GLOW_MS = 1100;
 const INK_SPEED = 1600; // paper units per second, before the batch budget
@@ -48,6 +49,7 @@ export class Paper {
   private dried: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null;
   private driedIds = new Set<string>();
   private driedDirty = true;
+  private boilSeed = 0;
   /** A temporary item drawn on top while a person is mid-gesture. */
   preview: Item | null = null;
   onActivity: ((active: boolean) => void) | null = null;
@@ -72,6 +74,10 @@ export class Paper {
         for (const id of e.ids) this.glowUntil.set(id, performance.now() + GLOW_MS);
         this.driedDirty = true;
       }
+      if (e.type === "motion") {
+        this.driedDirty = true;
+        if (!this.reducedMotion) this.play({ once: true });
+      }
       if (e.type === "clear") {
         this.progress.clear();
         this.glowUntil.clear();
@@ -79,11 +85,49 @@ export class Paper {
         this.current = null;
         this.tip = null;
         this.driedDirty = true;
+        this.playing = false;
+        this.time = 0;
         this.finishIfIdle();
       }
       this.render();
-      if (e.type === "change") this.tick();
+      if (e.type === "change" || e.type === "motion") this.tick();
+      if (e.type === "timeline" || e.type === "motion") this.onTime?.(this.time, this.playing);
     });
+  }
+
+  // Playback
+  /** Current timeline position in seconds. */
+  time = 0;
+  playing = false;
+  private playOnce = false;
+  private lastTick = 0;
+  onTime: ((time: number, playing: boolean) => void) | null = null;
+
+  play(opts: { once?: boolean } = {}) {
+    if (!this.scene.animated) return;
+    this.playOnce = opts.once === true && !this.scene.timeline.loop;
+    if (this.time >= this.scene.timeline.duration - 1e-6) this.time = 0;
+    this.playing = true;
+    this.lastTick = 0;
+    this.tick();
+    this.onTime?.(this.time, true);
+  }
+
+  pause() {
+    this.playing = false;
+    this.onTime?.(this.time, false);
+    this.render();
+  }
+
+  seek(t: number) {
+    this.time = Math.max(0, Math.min(this.scene.timeline.duration, t));
+    this.onTime?.(this.time, this.playing);
+    this.render();
+  }
+
+  toggle() {
+    if (this.playing) this.pause();
+    else this.play();
   }
 
   get theme(): Theme {
@@ -204,6 +248,20 @@ export class Paper {
       this.render(now);
       return;
     }
+    if (this.playing) {
+      const dt = this.lastTick ? (now - this.lastTick) / 1000 : 0;
+      this.lastTick = now;
+      const { duration, loop } = this.scene.timeline;
+      this.time += dt;
+      if (this.time >= duration) {
+        if (loop && !this.playOnce) this.time = this.time % Math.max(0.001, duration);
+        else {
+          this.time = duration;
+          this.playing = false;
+        }
+      }
+      this.onTime?.(this.time, this.playing);
+    }
     if (!this.current && this.queue.length > 0) {
       const item = this.queue.shift()!;
       this.current = { item, start: now, duration: this.durationFor(item) };
@@ -229,7 +287,7 @@ export class Paper {
       if (item) this.dry(item);
     }
     this.render(now);
-    if (this.busy || this.glowUntil.size > 0) this.tick();
+    if (this.busy || this.glowUntil.size > 0 || this.playing) this.tick();
   }
 
   /** Natural reveal time, squeezed so the whole queue fits the batch budget. */
@@ -248,7 +306,8 @@ export class Paper {
 
   /** Paint one settled item onto the dried layer. */
   private dry(item: Item) {
-    if (!this.dried || this.driedDirty || this.driedIds.has(item.id)) return;
+    // Moving marks are drawn every frame; only still ink dries.
+    if (!this.dried || this.driedDirty || this.driedIds.has(item.id) || item.motion) return;
     const ctx = this.dried.ctx;
     ctx.setTransform(this.dpr * this.scale, 0, 0, this.dpr * this.scale, 0, 0);
     this.drawItem(ctx, item, 1);
@@ -272,7 +331,9 @@ export class Paper {
   }
 
   private isLive(id: string): boolean {
-    return this.progress.has(id) || this.glowUntil.has(id);
+    if (this.progress.has(id) || this.glowUntil.has(id)) return true;
+    const item = this.scene.get(id);
+    return !!item?.motion;
   }
 
   render(now = performance.now()) {
@@ -286,17 +347,38 @@ export class Paper {
       ctx.drawImage(this.dried.canvas, 0, 0);
       ctx.restore();
     }
+    const { onion, fps } = this.scene.timeline;
+    const showOnion = onion && !this.playing && this.scene.animated && this.time > 0;
     for (const item of this.scene.items) {
       if (this.dried && this.driedIds.has(item.id)) continue;
       const t = this.progress.get(item.id) ?? 1;
       if (t <= 0) continue;
       const glowEnd = this.glowUntil.get(item.id);
       const glow = t < 1 ? 1 : glowEnd ? Math.max(0, (glowEnd - now) / GLOW_MS) : 0;
+      if (item.motion) {
+        if (showOnion) this.drawPosed(ctx, item, poseAt(item, this.time - 1 / fps), t, 0.22);
+        const pose = poseAt(item, this.time);
+        if (glow > 0) this.drawPosed(ctx, item, pose, t, 1, { halo: glow, now });
+        this.drawPosed(ctx, item, pose, t, 1);
+        continue;
+      }
       if (glow > 0) this.drawItem(ctx, item, t, { halo: glow, now });
       this.drawItem(ctx, item, t);
     }
     if (this.preview) this.drawItem(ctx, this.preview, 1);
     if (this.tip) this.drawTip(ctx, this.tip, now);
+  }
+
+  /** Draw a mark where its motion puts it at the current time. */
+  private drawPosed(ctx: CanvasRenderingContext2D, item: Item, pose: Pose, revealProgress: number, alphaScale: number, opts?: { halo: number; now: number }) {
+    const posed = pose.moving ? transformItem(item, pose.transform) : item;
+    const alpha = pose.opacity * alphaScale;
+    if (alpha <= 0.001) return;
+    const boil = item.motion?.boil ? Math.floor(this.time * item.motion.boil) : 0;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    this.drawItem(ctx, posed, Math.min(revealProgress, pose.reveal), opts, boil);
+    ctx.restore();
   }
 
   private drawPaper(ctx: CanvasRenderingContext2D) {
@@ -361,11 +443,12 @@ export class Paper {
     return g;
   }
 
-  private drawItem(ctx: CanvasRenderingContext2D, item: Item, t: number, opts?: { halo: number; now: number }) {
+  private drawItem(ctx: CanvasRenderingContext2D, item: Item, t: number, opts?: { halo: number; now: number }, boil = 0) {
     const pen = item.pen;
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+    this.boilSeed = boil;
     if (opts) {
       const style = this.haloStyle(ctx, item, 0.34 * opts.halo, opts.now);
       ctx.strokeStyle = style;
@@ -374,7 +457,7 @@ export class Paper {
     } else {
       ctx.strokeStyle = inkColor(pen.color, this._theme);
       ctx.fillStyle = inkColor(pen.color, this._theme);
-      ctx.globalAlpha = pen.opacity;
+      ctx.globalAlpha *= pen.opacity;
       ctx.lineWidth = pen.width;
       if (pen.dash) ctx.setLineDash([Math.max(6, pen.width * 3), Math.max(5, pen.width * 2.5)]);
     }
@@ -494,11 +577,13 @@ export class Paper {
     if (pts.length === 0) return;
     const n = pts.length;
     const taperLen = pen.taper ? Math.max(2, Math.min(14, Math.floor(n / 3))) : 0;
-    const grain = pen.texture === "grain" && !extra;
+    // Boil re-seeds the texture a few times a second, the shimmer of drawn animation.
+    const grain = (pen.texture === "grain" || (this.boilSeed > 0 && pen.kind !== "fineliner")) && !extra;
+    const seed = Math.round(pts[0].x + pts[0].y) + this.boilSeed * 101;
     const half = (i: number) => {
       let w = widthFor(pen, pts[i].p) / 2 + extra / 2;
       if (taperLen) w *= Math.min(1, (i + 1) / taperLen, (n - i) / taperLen);
-      if (grain) w *= 0.8 + 0.4 * noise(i, Math.round(pts[0].x + pts[0].y));
+      if (grain) w *= 0.8 + 0.4 * noise(i, seed);
       return Math.max(0.3, w);
     };
     if (pts.length === 1) {
@@ -516,7 +601,7 @@ export class Paper {
       const nx = -(b.y - a.y) / len;
       const ny = (b.x - a.x) / len;
       const w = half(i);
-      const g = grain ? (noise(i * 7, 3) - 0.5) * w : 0;
+      const g = grain ? (noise(i * 7, 3 + seed) - 0.5) * w : 0;
       left.push({ x: pts[i].x + nx * (w + g), y: pts[i].y + ny * (w + g) });
       right.push({ x: pts[i].x - nx * (w - g), y: pts[i].y - ny * (w - g) });
     }

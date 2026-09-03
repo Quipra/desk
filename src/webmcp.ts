@@ -10,6 +10,7 @@ import { GUIDE } from "./guide.ts";
 import { intersections, properties } from "./geometry.ts";
 import { describe } from "./look.ts";
 import { substitute, type ParamValue } from "./recipes.ts";
+import { EASES, keyTimes, poseAt, type Keyframe, type Motion } from "./motion.ts";
 import { THEMES } from "./appearance.ts";
 import { smooth, type Paper } from "./paper.ts";
 import {
@@ -20,12 +21,12 @@ import {
   PAPER_W,
   PEN_PRESETS,
   transformItem,
+  Scene,
   type Item,
   type PaperKind,
   type Pen,
   type PenKind,
   type Pt,
-  type Scene,
   type StencilShape,
 } from "./scene.ts";
 
@@ -119,6 +120,26 @@ const recipeArgs = {
   },
 };
 const MAX_RECIPE_DEPTH = 3;
+const MAX_TIME = 600;
+const keyframeFields = {
+  at: { type: "number", description: "seconds on the timeline; with at, this edit becomes a keyframe" },
+  ease: { type: "string", enum: EASES, description: "curve into this keyframe, default easeInOut" },
+  bezier: { type: "array", items: { type: "number" }, description: "cubic-bezier x1 y1 x2 y2, instead of ease" },
+  opacity: { type: "number", description: "0..1 at this keyframe" },
+  reveal: { type: "number", description: "0..1 how much of the mark is drawn at this keyframe (write-on)" },
+  wiggle: { type: "object", properties: { amp: { type: "number", description: "paper units" }, freq: { type: "number", description: "Hz" } }, required: ["amp", "freq"], additionalProperties: false },
+  boil: { type: "number", description: "line boil: re-noise textured edges this many times per second, 0 to stop" },
+  preset: { type: "string", description: "a motion you made with make, applied starting at 'at'" },
+  clearMotion: { type: "boolean", description: "remove all keyframes and motion from the selected marks" },
+};
+const timelineFields = {
+  action: { type: "string", enum: ["play", "pause", "seek", "set", "clear"] },
+  duration: { type: "number", description: "seconds" },
+  fps: { type: "number" },
+  loop: { type: "boolean" },
+  onion: { type: "boolean", description: "tracing paper: previous frame faint while scrubbing" },
+  paper: { type: "string", enum: ["blank", "grid", "lined"], description: "for clear: the fresh sheet's paper" },
+};
 const shapeEnum = ["rectangle", "triangle", "polygon"];
 const ids = { type: "array", items: { type: "string" }, description: "mark ids" };
 
@@ -153,6 +174,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
   // Tools the agent made for itself this session.
   const brushes = new Map<string, { pen: Pen; description: string }>();
   const recipes = new Map<string, { params: string[]; steps: Record<string, unknown>[]; description: string }>();
+  const motions = new Map<string, { motion: Motion; description: string }>();
   const resolvePen = (base: Pen, input: unknown): Pen => resolvePenWith(base, input, brushes);
   // Ids present at the agent's last look, so the next look can say what changed.
   let seen: Map<string, Item> | null = null;
@@ -261,6 +283,8 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     edit(i: Record<string, unknown>) {
       const targets = select(i);
       if (targets.length === 0) return { edited: [], note: "nothing matched" };
+      const animating = i.at !== undefined || i.preset !== undefined || i.wiggle !== undefined || i.boil !== undefined || i.clearMotion === true;
+      if (animating) return animate(targets, i);
       const t = {
         dx: i.dx === undefined ? undefined : ranged(i.dx, "dx", -PAPER_W, PAPER_W),
         dy: i.dy === undefined ? undefined : ranged(i.dy, "dy", -PAPER_H, PAPER_H),
@@ -301,6 +325,40 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       const item = scene.undo("agent");
       return item ? { removed: item.id, label: item.label } : { removed: null };
     },
+    timeline(i: Record<string, unknown>) {
+      const action = i.action === undefined ? "set" : requiredText(i.action, "action");
+      const patch: Partial<Scene["timeline"]> = {};
+      if (i.duration !== undefined) patch.duration = ranged(i.duration, "duration", 0.1, MAX_TIME);
+      if (i.fps !== undefined) patch.fps = ranged(i.fps, "fps", 1, 60);
+      for (const flag of ["loop", "onion"] as const) {
+        if (i[flag] === undefined) continue;
+        if (typeof i[flag] !== "boolean") throw new Error(`${flag} must be true or false`);
+        patch[flag] = i[flag] as boolean;
+      }
+      if (Object.keys(patch).length) scene.setTimeline(patch);
+      switch (action) {
+        case "play":
+          paper.play();
+          break;
+        case "pause":
+          paper.pause();
+          break;
+        case "seek":
+          paper.seek(ranged(i.at, "at", 0, MAX_TIME));
+          break;
+        case "set":
+          break;
+        case "clear": {
+          const kind = i.paper === undefined ? scene.paper : (requiredText(i.paper, "paper") as PaperKind);
+          if (!["blank", "grid", "lined"].includes(kind)) throw new Error("paper must be blank, grid or lined");
+          scene.clear(kind);
+          break;
+        }
+        default:
+          throw new Error("action must be play, pause, seek, set or clear");
+      }
+      return timelineState();
+    },
     recipe(i: Record<string, unknown>, depth = 0) {
       const name = requiredText(i.name, "name", 64);
       const recipe = recipes.get(name);
@@ -332,6 +390,80 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       return { recipe: name, done: results.length, results };
     },
   };
+
+  /** Keyframes, presets, wiggle and boil on selected marks. */
+  function animate(targets: Item[], i: Record<string, unknown>) {
+    let maxAt = 0;
+    const next = targets.map((item) => {
+      if (i.clearMotion === true) {
+        const { motion: _m, ...rest } = item;
+        return rest as Item;
+      }
+      const motion: Motion = { keys: [...(item.motion?.keys ?? [])], wiggle: item.motion?.wiggle, boil: item.motion?.boil };
+      if (i.preset !== undefined) {
+        const name = requiredText(i.preset, "preset", 64);
+        const made = motions.get(name);
+        if (!made) throw new Error(`no motion named ${name}; make it first or check look.custom`);
+        const offset = i.at === undefined ? 0 : ranged(i.at, "at", 0, MAX_TIME);
+        for (const k of made.motion.keys) upsertKey(motion.keys, { ...k, at: k.at + offset });
+        if (made.motion.wiggle) motion.wiggle = made.motion.wiggle;
+        if (made.motion.boil) motion.boil = made.motion.boil;
+      } else if (i.at !== undefined) {
+        upsertKey(motion.keys, readKeyframe(i));
+      }
+      if (i.wiggle !== undefined) motion.wiggle = readWiggle(i.wiggle);
+      if (i.boil !== undefined) {
+        const b = ranged(i.boil, "boil", 0, 30);
+        motion.boil = b > 0 ? b : undefined;
+      }
+      if (!motion.wiggle) delete motion.wiggle;
+      if (!motion.boil) delete motion.boil;
+      for (const k of motion.keys) maxAt = Math.max(maxAt, k.at);
+      return { ...item, motion };
+    });
+    const ids = scene.setMotion(next);
+    if (maxAt > scene.timeline.duration) scene.setTimeline({ duration: Math.ceil(maxAt * 10) / 10 });
+    return {
+      animated: ids,
+      keyframes: Object.fromEntries(next.map((item) => [item.id, item.motion?.keys.map((k) => k.at) ?? []])),
+      timeline: timelineState(),
+    };
+  }
+
+  function timelineState() {
+    return { ...scene.timeline, time: Math.round(paper.time * 100) / 100, playing: paper.playing, animated: scene.animated, keyTimes: keyTimes(scene.items) };
+  }
+
+  function readKeyframe(i: Record<string, unknown>): Keyframe {
+    const k: Keyframe = { at: ranged(i.at, "at", 0, MAX_TIME) };
+    if (i.dx !== undefined) k.dx = ranged(i.dx, "dx", -PAPER_W, PAPER_W);
+    if (i.dy !== undefined) k.dy = ranged(i.dy, "dy", -PAPER_H, PAPER_H);
+    if (i.scale !== undefined) k.scale = ranged(i.scale, "scale", 0, 20);
+    if (i.rotate !== undefined) k.rotate = ranged(i.rotate, "rotate", -3600, 3600);
+    if (i.opacity !== undefined) k.opacity = ranged(i.opacity, "opacity", 0, 1);
+    if (i.reveal !== undefined) k.reveal = ranged(i.reveal, "reveal", 0, 1);
+    if (i.about !== undefined) k.about = paperPoint(i.about, "about");
+    if (i.ease !== undefined) {
+      const e = requiredText(i.ease, "ease");
+      if (!(EASES as string[]).includes(e)) throw new Error(`ease must be one of ${EASES.join(", ")}`);
+      k.ease = e as Keyframe["ease"];
+    }
+    if (i.bezier !== undefined) {
+      if (!Array.isArray(i.bezier) || i.bezier.length !== 4) throw new Error("bezier must be four numbers: x1 y1 x2 y2");
+      k.bezier = i.bezier.map((n, idx) => ranged(n, `bezier[${idx}]`, -2, 3)) as Keyframe["bezier"];
+    }
+    if (Object.keys(k).length === 1 && i.preset === undefined) throw new Error("a keyframe needs something to change: dx, dy, scale, rotate, opacity or reveal");
+    return k;
+  }
+
+  function readWiggle(v: unknown) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("wiggle must be { amp, freq }");
+    const w = v as Record<string, unknown>;
+    const amp = ranged(w.amp, "wiggle.amp", 0, 400);
+    const freq = ranged(w.freq, "wiggle.freq", 0, 30);
+    return amp > 0 && freq > 0 ? { amp, freq } : undefined;
+  }
+
   type Action = keyof typeof act;
   const actionNames = Object.keys(act) as Action[];
 
@@ -344,7 +476,10 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     // Waiting is opt-in and capped so a tool result never stalls on animation.
     if (i.wait === true) await paper.whenIdle(signal, 3000);
     const theme = paper.theme ?? "charcoal";
-    const view = describe(scene, { region: reg, detail: i.detail === true, offset, limit });
+    // A look at a time shows every mark where its motion puts it then.
+    const at = i.at === undefined ? null : ranged(i.at, "at", 0, MAX_TIME);
+    const source = at === null ? scene : posedScene(scene, at);
+    const view = describe(source, { region: reg, detail: i.detail === true, offset, limit });
     const changes = seen === null ? null : diffSince(seen, scene.items);
     seen = new Map(scene.items.map((item) => [item.id, item]));
     const first = !guideRead;
@@ -357,7 +492,10 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       custom: {
         brushes: [...brushes].map(([name, b]) => ({ name, description: b.description })),
         recipes: [...recipes].map(([name, r]) => ({ name, params: r.params, description: r.description })),
+        motions: [...motions].map(([name, m]) => ({ name, keys: m.motion.keys.length, description: m.description })),
       },
+      timeline: timelineState(),
+      ...(at !== null ? { at } : {}),
       drawing: paper.busy,
       ...(first ? { guide: GUIDE } : {}),
     };
@@ -387,6 +525,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
           wait: { type: "boolean", description: "true to wait (up to 3s) for ink in motion to settle first; the mark list is exact either way" },
           offset: { type: "number" },
           limit: { type: "number" },
+          at: { type: "number", description: "seconds: see every mark where its motion puts it at that time" },
         },
         additionalProperties: false,
       },
@@ -488,7 +627,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       name: "edit",
       annotations: { readOnlyHint: false },
       description:
-        "Change existing marks without redrawing. Select by ids, group and/or region, then any of: pen (restyle), dx/dy (move), scale (about a point, default the mark's center), rotate (degrees clockwise), label, regroup, duplicate (edit copies, keep originals). Returns the edited ids and bounds.",
+        "Change existing marks without redrawing, or animate them. Select by ids, group and/or region, then any of: pen (restyle), dx/dy (move), scale (about a point, default the mark's center), rotate (degrees clockwise), label, regroup, duplicate (edit copies, keep originals). With at (seconds) the same fields become a KEYFRAME instead: the mark tweens there from its previous key with ease or bezier; opacity and reveal (write-on) are keyable too. wiggle adds smooth random drift, boil re-noises the edge like hand-drawn animation, preset applies a motion you made. Playback starts automatically.",
       inputSchema: {
         type: "object",
         properties: {
@@ -504,6 +643,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
           label,
           regroup: { type: "string", description: "new group name for the selected marks" },
           duplicate: { type: "boolean" },
+          ...keyframeFields,
         },
         additionalProperties: false,
       },
@@ -524,31 +664,27 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
       execute: wrap(act.undo),
     },
     {
-      name: "new_sheet",
+      name: "timeline",
       annotations: { readOnlyHint: false },
-      description: "Take a fresh sheet: blank, grid (50-unit squares) or lined. Clears everything including the person's marks, so ask first.",
-      inputSchema: { type: "object", properties: { paper: { type: "string", enum: ["blank", "grid", "lined"] } }, additionalProperties: false },
-      execute: wrap((i) => {
-        const kind = i.paper === undefined ? scene.paper : (requiredText(i.paper, "paper") as PaperKind);
-        if (!["blank", "grid", "lined"].includes(kind)) throw new Error("paper must be blank, grid or lined");
-        scene.clear(kind);
-        return { paper: kind, items: 0 };
-      }),
+      description: "The sheet's clock. action play, pause, seek (at), set (duration, fps, loop, onion), or clear (a fresh sheet: blank, grid or lined, which erases everything including the person's marks, so ask first). Returns the timeline state and every keyframe time.",
+      inputSchema: { type: "object", properties: { ...timelineFields, at: { type: "number", description: "seconds, for seek" } }, additionalProperties: false },
+      execute: wrap(act.timeline),
     },
     {
       name: "make",
       annotations: { readOnlyHint: false },
       description:
-        "Make your own tool for this session. kind brush: a named pen you design (kind, color, width, opacity, dash, texture grain|chalk, taper, fill hatch|crosshatch|stipple) and then use anywhere as pen: { brush: name }. kind recipe: a named list of construct steps with parameters, written as JSON text in steps; any number in a step may be an expression over $params such as \"($A.x+$B.x)/2\" or \"hypot($B.x-$A.x,$B.y-$A.y)/2\" (functions: sqrt abs min max hypot sin cos tan atan2 round). Use a recipe as a construct step { tool: recipe, name, args }. Making a name again replaces it.",
+        "Make your own tool for this session. kind motion: a named animation preset (keys with relative times, wiggle, boil) applied to any marks with edit preset. kind brush: a named pen you design (kind, color, width, opacity, dash, texture grain|chalk, taper, fill hatch|crosshatch|stipple) and then use anywhere as pen: { brush: name }. kind recipe: a named list of construct steps with parameters, written as JSON text in steps; any number in a step may be an expression over $params such as \"($A.x+$B.x)/2\" or \"hypot($B.x-$A.x,$B.y-$A.y)/2\" (functions: sqrt abs min max hypot sin cos tan atan2 round). Use a recipe as a construct step { tool: recipe, name, args }. Making a name again replaces it.",
       inputSchema: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["brush", "recipe"] },
+          kind: { type: "string", enum: ["brush", "recipe", "motion"] },
           name: { type: "string", description: "short identifier, e.g. inkwash, bisector" },
           description: { type: "string", description: "what it is for, shown in look.custom" },
           pen,
           params: { type: "array", items: { type: "string" }, description: "recipe parameter names, e.g. [\"A\", \"B\"]" },
           steps: { type: "string", description: "recipe only: JSON text of an array of construct steps using $params" },
+          motion: { type: "string", description: "motion only: JSON text {keys:[{at,dx,dy,scale,rotate,opacity,reveal,ease}], wiggle:{amp,freq}, boil}; key times are relative to where the preset is applied" },
         },
         required: ["kind", "name"],
         additionalProperties: false,
@@ -564,7 +700,31 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
           brushes.set(name, { pen: made, description });
           return { made: "brush", name, pen: made, use: { pen: { brush: name } } };
         }
-        if (kind !== "recipe") throw new Error("kind must be brush or recipe");
+        if (kind === "motion") {
+          if (typeof i.motion !== "string") throw new Error("a motion needs motion as JSON text");
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(i.motion);
+          } catch (err) {
+            throw new Error(`motion is not valid JSON: ${errorMessage(err)}`);
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("motion must be a JSON object");
+          const m = parsed as Record<string, unknown>;
+          const keys: Keyframe[] = [];
+          for (const [n, raw] of (Array.isArray(m.keys) ? m.keys : []).entries()) {
+            if (!raw || typeof raw !== "object") throw new Error(`keys[${n}] must be an object`);
+            upsertKey(keys, readKeyframe({ preset: name, ...(raw as Record<string, unknown>) }));
+          }
+          const motion: Motion = { keys };
+          if (m.wiggle !== undefined) motion.wiggle = readWiggle(m.wiggle);
+          if (m.boil !== undefined) motion.boil = ranged(m.boil, "boil", 0, 30) || undefined;
+          if (!motion.wiggle) delete motion.wiggle;
+          if (!motion.boil) delete motion.boil;
+          if (keys.length === 0 && !motion.wiggle && !motion.boil) throw new Error("a motion needs keys, wiggle or boil");
+          motions.set(name, { motion, description });
+          return { made: "motion", name, keys: keys.length, use: { tool: "edit", ids: ["<mark id>"], preset: name, at: 0 } };
+        }
+        if (kind !== "recipe") throw new Error("kind must be brush, recipe or motion");
         if (typeof i.steps !== "string") throw new Error("a recipe needs steps as JSON text");
         let parsed: unknown;
         try {
@@ -587,7 +747,7 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     {
       name: "construct",
       annotations: { readOnlyHint: false },
-      description: `The main way to draw: up to ${MAX_STEPS} instrument steps in one call, in order. Each step names its tool (pick_pen, draw, ruler, compass, stencil, edit, erase, undo, or recipe with name and args) and carries that tool's fields, plus an optional inline pen and group. verify: true appends a look to the result so you can check the figure without another call. Stops at the first invalid step and reports what was done.`,
+      description: `The main way to draw: up to ${MAX_STEPS} instrument steps in one call, in order. Each step names its tool (pick_pen, draw, ruler, compass, stencil, edit, erase, undo, timeline, or recipe with name and args) and carries that tool's fields, plus an optional inline pen and group. verify: true appends a look to the result so you can check the figure without another call. Stops at the first invalid step and reports what was done.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -603,7 +763,6 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
                 kind: { type: "string", enum: penKinds },
                 color: { type: "string" },
                 width: { type: "number" },
-                opacity: { type: "number" },
                 dash: { type: "boolean" },
                 points: path,
                 strokes: { type: "array", items: path },
@@ -632,6 +791,8 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
                 duplicate: { type: "boolean" },
                 name: { type: "string", description: "recipe name" },
                 args: recipeArgs,
+                ...keyframeFields,
+                ...timelineFields,
               },
               required: ["tool"],
               additionalProperties: false,
@@ -725,6 +886,26 @@ export async function registerDesk(scene: Scene, paper: Paper, hooks: AgentHooks
     if (!item) throw new Error(`no mark with id ${id}; call look to see ids`);
     return item;
   }
+}
+
+/** A read-only view of the scene with every animated mark posed at time t. */
+function posedScene(scene: Scene, t: number): Scene {
+  const view = Object.create(Scene.prototype) as Scene;
+  Object.assign(view, scene, {
+    items: scene.items.map((item) => {
+      const pose = poseAt(item, t);
+      return pose.moving ? transformItem(item, pose.transform) : item;
+    }),
+  });
+  return view;
+}
+
+/** Replace a key at the same time, otherwise add it. */
+function upsertKey(keys: Keyframe[], key: Keyframe) {
+  const at = keys.findIndex((k) => Math.abs(k.at - key.at) < 1e-6);
+  if (at === -1) keys.push(key);
+  else keys[at] = { ...keys[at], ...key };
+  keys.sort((a, b) => a.at - b.at);
 }
 
 /** What a person did since the agent last looked. */
